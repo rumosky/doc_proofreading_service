@@ -1,4 +1,5 @@
 import os
+import time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from openai import OpenAI
@@ -24,17 +25,47 @@ def chat():
         return jsonify({"error": "消息不能为空"}), 400
 
     messages = [{"role": "user", "content": user_input}]
+    start_time = time.time()
 
     try:
-        # 同步调用，不用stream，简化示例
         resp = client.chat.completions.create(
             model=bot_id,
             messages=messages,
             temperature=0.6,
             max_tokens=32768,
         )
-        assistant_reply = resp.choices[0].message.content
-        return jsonify({"reply": assistant_reply})
+        elapsed_time = (time.time() - start_time) * 1000  # 转毫秒
+        # print(f"返回数据：", resp)
+        # 直接属性方式访问
+        choice = resp.choices[0]
+        message = choice.message
+
+        assistant_reply = getattr(message, "content", "")
+        thinking_process = getattr(message, "reasoning_content", "")
+
+        send_token_usage = reply_token_usage = total_token_usage = 0
+        if hasattr(resp, "bot_usage") and isinstance(resp.bot_usage, dict):
+            # bot_usage 是 dict
+            model_usage_list = resp.bot_usage.get("model_usage", [])
+            if isinstance(model_usage_list, list) and len(model_usage_list) > 0:
+                first_usage = model_usage_list[0]
+                if isinstance(first_usage, dict):
+                    send_token_usage = first_usage.get("prompt_tokens", 0)
+                    reply_token_usage = first_usage.get("completion_tokens", 0)
+                    total_token_usage = first_usage.get("total_tokens", 0)
+
+        return jsonify(
+            {
+                "reply": assistant_reply,
+                "thinking_process": thinking_process,
+                "token_usage": {
+                    "send_token_usage": send_token_usage,
+                    "reply_token_usage": reply_token_usage,
+                    "total_token_usage": total_token_usage,
+                },
+                "response_time_ms": round(elapsed_time, 2),
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
