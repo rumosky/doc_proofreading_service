@@ -1,8 +1,3 @@
-# 先打猴子补丁，必须放最顶部，最先执行
-from gevent import monkey
-
-monkey.patch_all()
-
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
