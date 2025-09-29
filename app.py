@@ -99,7 +99,7 @@ def chat_stream():
             )
             for resp in resps:
                 # 转成字典后序列化
-                yield json.dumps(resp.dict()) + '\n'
+                yield json.dumps(resp.model_dump()) + '\n'
             elapsed_time = (time.time() - start_time) * 1000
             yield json.dumps({"done": True, "response_time_ms": round(elapsed_time, 2)}) + '\n'
         except Exception as e:
