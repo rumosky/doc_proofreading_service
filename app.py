@@ -27,19 +27,32 @@ base_url = os.getenv("BASE_URL")
 bot_id = os.getenv("BOT_ID")
 grok_api_key = os.getenv("GROK_API_KEY")
 grok_base_url = os.getenv("GROK_BASE_URL")
+chatgpt_api_key = os.getenv("CHATGPT_API_KEY")
+chatgpt_base_url = os.getenv("CHATGPT_BASE_URL")
 
 client = OpenAI(base_url=base_url, api_key=api_key)
 grok_client = OpenAI(api_key=grok_api_key, base_url=grok_base_url)
+chatgpt_client = OpenAI(api_key=chatgpt_api_key, base_url=chatgpt_base_url)
 
 app = Flask(__name__)
 CORS(app)  # 允许所有跨域请求，前端 localhost 调试可用
 
 
-def load_system_prompt():
+def load_grok_system_prompt():
     try:
         with open("prompt.json", "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("system_prompt", "")
+            return data.get("grok_system_prompt", "")
+    except Exception as e:
+        app.logger.error(f"读取 grok_system_prompt 失败: {e}")
+        return ""
+
+
+def load_chatgpt_system_prompt():
+    try:
+        with open("prompt.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("chatgpt_system_prompt", "")
     except Exception as e:
         app.logger.error(f"读取 prompt.json 失败: {e}")
         return ""
@@ -170,7 +183,7 @@ def chat_grok():
 
     temperature = parse_temperature(data.get("temperature", None))
     max_tokens = parse_max_tokens(data.get("max_tokens", None))
-    system_prompt = load_system_prompt()
+    system_prompt = load_grok_system_prompt()
 
     start_time = time.time()
     app.logger.info(f"处理 Grok 用户请求: {user_input}")
@@ -290,6 +303,139 @@ def test_grok():
             ),
             500,
         )
+
+@app.route("/chat/chatgpt", methods=["POST"])
+def chat_chatgpt():
+    data = request.json or {}
+    user_input = data.get("message", "").strip()
+    if not user_input:
+        app.logger.warning("ChatGPT 接口收到空消息请求")
+        return jsonify({"error": "消息不能为空"}), 400
+
+    temperature = parse_temperature(data.get("temperature", None))
+    max_tokens = parse_max_tokens(data.get("max_tokens", None))
+    system_prompt = load_chatgpt_system_prompt()
+
+    # 构造系统+用户消息
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_input},
+    ]
+
+    start_time = time.time()
+    app.logger.info(f"处理 ChatGPT 用户请求: {user_input}")
+
+    try:
+        # 这里改成你想调用的 ChatGPT 模型名称
+        chatgpt_model = "gpt-4-turbo"
+
+        resp = chatgpt_client.chat.completions.create(
+            model=chatgpt_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        elapsed_time = (time.time() - start_time) * 1000  # 毫秒
+
+        choice = resp.choices[0]
+        message = choice.message
+        assistant_reply = getattr(message, "content", "")
+
+        usage = getattr(resp, "usage", {}) or {}
+        send_token = usage.get("prompt_tokens", 0)
+        reply_token = usage.get("completion_tokens", 0)
+        total_token = usage.get("total_tokens", 0)
+
+        app.logger.info(f"ChatGPT 响应内容: {assistant_reply}")
+
+        return jsonify(
+            {
+                "reply": assistant_reply,
+                "token_usage": {
+                    "send_token_usage": send_token,
+                    "reply_token_usage": reply_token,
+                    "total_token_usage": total_token,
+                },
+                "response_time_ms": round(elapsed_time, 2),
+            }
+        )
+    except Exception as e:
+        app.logger.error(f"ChatGPT 接口发生错误: {str(e)}")
+        return jsonify({"error": "服务器内部错误"}), 500
+
+
+@app.route("/chat/chatgpt/test", methods=["GET"])
+def test_chatgpt():
+    """前端用来测试 ChatGPT 是否可用、网络是否连通的接口"""
+    test_question = "hello"
+    system_prompt = "You are ChatGPT connectivity test assistant."
+
+    if not api_key:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "未检测到 CHATGPT_API_KEY 环境变量，请检查后端配置。",
+                }
+            ),
+            500,
+        )
+
+    start_time = time.time()
+    app.logger.info("正在测试 ChatGPT API 连通性...")
+
+    try:
+        chatgpt_model = "gpt-4-turbo"
+        resp = chatgpt_client.chat.completions.create(
+            model=chatgpt_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": test_question},
+            ],
+        )
+
+        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+
+        message = resp.choices[0].message
+        assistant_reply = getattr(message, "content", "")
+
+        usage = getattr(resp, "usage", {}) or {}
+        send_token = usage.get("prompt_tokens", 0)
+        reply_token = usage.get("completion_tokens", 0)
+        total_token = usage.get("total_tokens", 0)
+
+        app.logger.info(f"ChatGPT 测试成功，延迟 {elapsed_ms} ms")
+
+        return jsonify(
+            {
+                "success": True,
+                "reply": assistant_reply,
+                "latency_ms": elapsed_ms,
+                "token_usage": {
+                    "send_token_usage": send_token,
+                    "reply_token_usage": reply_token,
+                    "total_token_usage": total_token,
+                },
+            }
+        )
+
+    except Exception as e:
+        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+        error_msg = str(e)
+
+        app.logger.error(f"ChatGPT 测试失败（耗时 {elapsed_ms} ms）: {error_msg}")
+
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "latency_ms": elapsed_ms,
+                    "error": error_msg,
+                }
+            ),
+            500,
+        )
+    
 
 
 if __name__ == "__main__":
