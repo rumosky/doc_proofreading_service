@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import logging
 import json
@@ -7,11 +8,21 @@ from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):  # 打包后
+        return sys._MEIPASS  # 临时解压目录，.env也在这里
+    else:
+        return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_path()
+
+# 这里用绝对路径加载打包进去的 .env 文件
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 # 配置日志
 
-log_file = "app.log"  # 日志文件路径
+log_file = os.path.join(BASE_DIR, "app.log")  # 日志文件路径
 logging.basicConfig(
     level=logging.INFO,  # 设置日志级别
     format="%(asctime)s [%(levelname)s]: %(message)s",  # 日志格式
@@ -40,17 +51,21 @@ CORS(app)  # 允许所有跨域请求，前端 localhost 调试可用
 
 def load_grok_system_prompt():
     try:
-        with open("prompt.json", "r", encoding="utf-8") as f:
+        # 这里用 exe 所在目录，而不是 BASE_DIR（避免取到 sys._MEIPASS）
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+        json_path = os.path.join(exe_dir, "prompt.json")
+        with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data.get("grok_system_prompt", "")
     except Exception as e:
         app.logger.error(f"读取 grok_system_prompt 失败: {e}")
         return ""
 
-
 def load_chatgpt_system_prompt():
     try:
-        with open("prompt.json", "r", encoding="utf-8") as f:
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+        json_path = os.path.join(exe_dir, "prompt.json")
+        with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data.get("chatgpt_system_prompt", "")
     except Exception as e:
@@ -210,10 +225,13 @@ def chat_grok():
         assistant_reply = getattr(message, "content", "")
 
         # Token 使用（Grok 兼容 OpenAI 格式）
-        usage = resp.usage or {}
-        send_token = usage.get("prompt_tokens", 0)
-        reply_token = usage.get("completion_tokens", 0)
-        total_token = usage.get("total_tokens", 0)
+        usage = getattr(resp, "usage", None)
+        if usage:
+            send_token = getattr(usage, "prompt_tokens", 0)
+            reply_token = getattr(usage, "completion_tokens", 0)
+            total_token = getattr(usage, "total_tokens", 0)
+        else:
+            send_token = reply_token = total_token = 0
 
         app.logger.info(f"Grok 响应内容: {assistant_reply}")
 
@@ -267,10 +285,13 @@ def test_grok():
         message = resp.choices[0].message
         assistant_reply = getattr(message, "content", "")
 
-        usage = resp.usage or {}
-        send_token = usage.get("prompt_tokens", 0)
-        reply_token = usage.get("completion_tokens", 0)
-        total_token = usage.get("total_tokens", 0)
+        usage = getattr(resp, "usage", None)
+        if usage:
+            send_token = getattr(usage, "prompt_tokens", 0)
+            reply_token = getattr(usage, "completion_tokens", 0)
+            total_token = getattr(usage, "total_tokens", 0)
+        else:
+            send_token = reply_token = total_token = 0
 
         app.logger.info(f"Grok 测试成功，延迟 {elapsed_ms} ms")
 
@@ -341,10 +362,13 @@ def chat_chatgpt():
         message = choice.message
         assistant_reply = getattr(message, "content", "")
 
-        usage = getattr(resp, "usage", {}) or {}
-        send_token = usage.get("prompt_tokens", 0)
-        reply_token = usage.get("completion_tokens", 0)
-        total_token = usage.get("total_tokens", 0)
+        usage = getattr(resp, "usage", None)
+        if usage:
+            send_token = getattr(usage, "prompt_tokens", 0)
+            reply_token = getattr(usage, "completion_tokens", 0)
+            total_token = getattr(usage, "total_tokens", 0)
+        else:
+            send_token = reply_token = total_token = 0
 
         app.logger.info(f"ChatGPT 响应内容: {assistant_reply}")
 
@@ -399,10 +423,13 @@ def test_chatgpt():
         message = resp.choices[0].message
         assistant_reply = getattr(message, "content", "")
 
-        usage = getattr(resp, "usage", {}) or {}
-        send_token = usage.get("prompt_tokens", 0)
-        reply_token = usage.get("completion_tokens", 0)
-        total_token = usage.get("total_tokens", 0)
+        usage = getattr(resp, "usage", None)
+        if usage:
+            send_token = getattr(usage, "prompt_tokens", 0)
+            reply_token = getattr(usage, "completion_tokens", 0)
+            total_token = getattr(usage, "total_tokens", 0)
+        else:
+            send_token = reply_token = total_token = 0
 
         app.logger.info(f"ChatGPT 测试成功，延迟 {elapsed_ms} ms")
 
