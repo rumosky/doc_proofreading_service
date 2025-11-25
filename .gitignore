@@ -2,4 +2,6 @@
 app.log
 build/
 dist/
+__pycache__/
+.poetry/
 *.spec
