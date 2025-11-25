@@ -3,6 +3,7 @@ import sys
 import time
 import logging
 import json
+import requests
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from openai import OpenAI
@@ -40,6 +41,7 @@ grok_api_key = os.getenv("GROK_API_KEY")
 grok_base_url = os.getenv("GROK_BASE_URL")
 chatgpt_api_key = os.getenv("CHATGPT_API_KEY")
 chatgpt_base_url = os.getenv("CHATGPT_BASE_URL")
+chatgpt_proxy_base_url = os.getenv("CHATGPT_PROXY_BASE_URL")
 
 client = OpenAI(base_url=base_url, api_key=api_key)
 grok_client = OpenAI(api_key=grok_api_key, base_url=grok_base_url)
@@ -462,7 +464,188 @@ def test_chatgpt():
             ),
             500,
         )
-    
+
+
+import requests
+
+@app.route("/chat/chatgpt/proxy", methods=["POST"])
+def chat_chatgpt_proxy():
+    data = request.json or {}
+    user_input = data.get("message", "").strip()
+    if not user_input:
+        app.logger.warning("ChatGPT 代理接口收到空消息请求")
+        return jsonify({"error": "消息不能为空"}), 400
+
+    temperature = parse_temperature(data.get("temperature", None))
+    max_tokens = parse_max_tokens(data.get("max_tokens", None))
+    system_prompt = load_chatgpt_system_prompt()
+
+    # 构造系统+用户消息
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_input},
+    ]
+
+    start_time = time.time()
+    app.logger.info(f"处理 ChatGPT 代理用户请求: {user_input}")
+
+    proxy_url = chatgpt_proxy_base_url.rstrip("/") + "/v1/chat/completions"
+
+    try:
+        # 构造请求体，根据你测试代码示例
+        payload = {
+            "model": "gpt-4-turbo",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            # 如果需要开启流式，可加 "stream": True
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            # 如果代理接口需要API KEY，放这里，例如:
+            # "Authorization": f"Bearer {your_proxy_api_key}"
+        }
+
+        resp = requests.post(proxy_url, json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+        resp_json = resp.json()
+
+        elapsed_time = (time.time() - start_time) * 1000  # 毫秒
+
+        # 从返回结构中提取回答
+        choices = resp_json.get("choices", [])
+        if not choices:
+            raise ValueError("代理接口返回无choices字段或为空")
+
+        message = choices[0].get("message", {})
+        assistant_reply = message.get("content", "")
+
+        # token使用情况兼容处理
+        usage = resp_json.get("usage", {})
+        send_token = usage.get("prompt_tokens", 0)
+        reply_token = usage.get("completion_tokens", 0)
+        total_token = usage.get("total_tokens", 0)
+
+        app.logger.info(f"ChatGPT 代理响应内容: {assistant_reply}")
+
+        return jsonify(
+            {
+                "reply": assistant_reply,
+                "token_usage": {
+                    "send_token_usage": send_token,
+                    "reply_token_usage": reply_token,
+                    "total_token_usage": total_token,
+                },
+                "response_time_ms": round(elapsed_time, 2),
+            }
+        )
+
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"ChatGPT 代理接口请求错误: {str(e)}")
+        return jsonify({"error": "代理服务器请求失败"}), 500
+    except Exception as e:
+        app.logger.error(f"ChatGPT 代理接口处理错误: {str(e)}")
+        return jsonify({"error": "服务器内部错误"}), 500
+
+
+
+@app.route("/chat/chatgpt/proxy/test", methods=["GET"])
+def test_chatgpt_proxy():
+    """前端用来测试 ChatGPT 代理是否可用、网络是否连通的接口"""
+    test_question = "hello"
+    system_prompt = "You are ChatGPT connectivity test assistant."
+
+    if not chatgpt_proxy_base_url:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "未检测到 CHATGPT_PROXY_BASE_URL 环境变量，请检查后端配置。",
+                }
+            ),
+            500,
+        )
+
+    start_time = time.time()
+    app.logger.info("正在测试 ChatGPT 代理 API 连通性...")
+
+    proxy_url = chatgpt_proxy_base_url.rstrip("/") + "/v1/chat/completions"
+
+    try:
+        payload = {
+            "model": "gpt-4-turbo",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": test_question},
+            ],
+        }
+        headers = {
+            "Content-Type": "application/json",
+        }
+
+        resp = requests.post(proxy_url, json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+        resp_json = resp.json()
+
+        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+
+        choices = resp_json.get("choices", [])
+        if not choices:
+            raise ValueError("代理接口返回无choices字段或为空")
+
+        message = choices[0].get("message", {})
+        assistant_reply = message.get("content", "")
+
+        usage = resp_json.get("usage", {})
+        send_token = usage.get("prompt_tokens", 0)
+        reply_token = usage.get("completion_tokens", 0)
+        total_token = usage.get("total_tokens", 0)
+
+        app.logger.info(f"ChatGPT 代理测试成功，延迟 {elapsed_ms} ms")
+
+        return jsonify(
+            {
+                "success": True,
+                "reply": assistant_reply,
+                "latency_ms": elapsed_ms,
+                "token_usage": {
+                    "send_token_usage": send_token,
+                    "reply_token_usage": reply_token,
+                    "total_token_usage": total_token,
+                },
+            }
+        )
+
+    except requests.exceptions.RequestException as e:
+        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+        error_msg = str(e)
+        app.logger.error(f"ChatGPT 代理测试请求失败（耗时 {elapsed_ms} ms）: {error_msg}")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "latency_ms": elapsed_ms,
+                    "error": "代理服务器请求失败",
+                }
+            ),
+            500,
+        )
+    except Exception as e:
+        elapsed_ms = round((time.time() - start_time) * 1000, 2)
+        error_msg = str(e)
+        app.logger.error(f"ChatGPT 代理测试处理失败（耗时 {elapsed_ms} ms）: {error_msg}")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "latency_ms": elapsed_ms,
+                    "error": "服务器内部错误",
+                }
+            ),
+            500,
+        )
+
 
 # 调试开发
 # if __name__ == "__main__":
