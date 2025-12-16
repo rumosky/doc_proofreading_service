@@ -8,7 +8,10 @@ from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
-
+from datetime import datetime
+import urllib3
+# 禁用 verify=False 产生的安全警告，让日志干净点
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_base_path():
     if getattr(sys, 'frozen', False):  # 打包后
@@ -21,16 +24,29 @@ BASE_DIR = get_base_path()
 # 这里用绝对路径加载打包进去的 .env 文件
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
-# 配置日志
+# --- 修复控制台编码 (防止打包 -w 后报错) ---
+if sys.platform.startswith("win") and sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
-log_file = os.path.join(BASE_DIR, "app.log")  # 日志文件路径
+# --- 配置日志 ---
+log_file = os.path.join(BASE_DIR, "app.log")
+
+# 动态构建 handlers
+handlers_list = [
+    logging.FileHandler(log_file, encoding="utf-8") # 文件日志必须有
+]
+
+# 只有有控制台窗口时，才输出到控制台，否则打包后会报错或无意义
+if sys.stdout is not None:
+    handlers_list.append(logging.StreamHandler(sys.stdout))
+
 logging.basicConfig(
-    level=logging.INFO,  # 设置日志级别
-    format="%(asctime)s [%(levelname)s]: %(message)s",  # 日志格式
-    handlers=[
-        logging.FileHandler(log_file),  # 输出到文件
-        logging.StreamHandler(),  # 输出到控制台
-    ],
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s]: %(message)s",
+    handlers=handlers_list,
 )
 
 
@@ -50,6 +66,76 @@ chatgpt_client = OpenAI(api_key=chatgpt_api_key, base_url=chatgpt_base_url)
 app = Flask(__name__)
 CORS(app)  # 允许所有跨域请求，前端 localhost 调试可用
 
+# 定义一个不使用代理的配置，强制直连
+NO_PROXY = {
+    "http": None,
+    "https": None,
+}
+
+# --- 新增：日志统计相关配置 ---
+LOG_API_URL = "https://test.yuqing.cn/api/konne-ai-report/grok-log"
+LOG_HEADERS = {
+    "Host": "test.yuqing.cn",
+    "referer": "http://10.1.0.41:8086/",
+    "origin": "http://10.1.0.41:8086",
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Python/3.12 Flask/3.0"
+}
+
+def save_grok_log(model, req_content):
+    """
+    创建日志记录，返回 log_id
+    """
+    try:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "model": model,
+            "req": req_content,
+            "createdAt": current_time
+        }
+        # 调试打印：确认当前没有被代理劫持
+        # print(f"DEBUG: Current Proxies Env: {os.environ.get('HTTP_PROXY')}, {os.environ.get('HTTPS_PROXY')}")
+
+        # timeout 设置短一点，避免日志接口卡顿影响主业务
+        resp = requests.post(LOG_API_URL, json=payload, headers=LOG_HEADERS, timeout=30, proxies=NO_PROXY, verify=False)
+        resp_json = resp.json()
+        return resp_json.get("data") # 返回 ID (Long/Int)
+    except Exception as e:
+        # 日志记录失败不应阻断主流程，只在本地打印错误
+        print(f"创建 Grok 统计日志失败: {e}")
+        app.logger.error(f"创建 Grok 统计日志失败: {e}")
+        return None
+
+def update_grok_log(log_id, response_content, usage=None, error_msg=None, is_success=True):
+    """
+    更新日志记录，回填 token 和结果
+    """
+    if not log_id:
+        return
+
+    try:
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "completedAt": current_time
+        }
+
+        if is_success:
+            payload["resp"] = response_content
+            if usage:
+                payload["promptTokens"] = usage.get("send_token_usage", 0)
+                payload["completionTokens"] = usage.get("reply_token_usage", 0)
+                payload["totalTokens"] = usage.get("total_tokens", 0)
+        else:
+            # 失败时，resp 字段存放错误信息
+            payload["resp"] = error_msg or "Unknown Error"
+
+        url = f"{LOG_API_URL}/{log_id}"
+        requests.put(url, json=payload, headers=LOG_HEADERS, timeout=30, proxies=NO_PROXY, verify=False)
+    except Exception as e:
+        print(f"更新 Grok 统计日志失败: {e}")
+        app.logger.error(f"更新 Grok 统计日志失败: {error_msg}")
+
+# --- 新增结束 ---
 
 def load_grok_system_prompt():
     try:
@@ -201,9 +287,16 @@ def chat_grok():
     temperature = parse_temperature(data.get("temperature", None))
     max_tokens = parse_max_tokens(data.get("max_tokens", None))
     system_prompt = load_grok_system_prompt()
+    
+    # 定义模型名称，方便日志记录
+    model_name = "grok-4-1-fast-reasoning"
 
     start_time = time.time()
     app.logger.info(f"处理 Grok 用户请求: {user_input}")
+
+    # 【新增 1】调用 API 前，先记录请求日志
+    log_id = save_grok_log(model_name, user_input)
+    app.logger.info(f"记录当前请求日志ID: {log_id}")
 
     try:
         # 构造消息格式：system + user
@@ -212,9 +305,9 @@ def chat_grok():
             {"role": "user", "content": user_input},
         ]
 
-        # 调用 Grok（与官方示例一致）
+        # 调用 Grok
         resp = grok_client.chat.completions.create(
-            model="grok-4",
+            model=model_name,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -226,7 +319,7 @@ def chat_grok():
         message = choice.message
         assistant_reply = getattr(message, "content", "")
 
-        # Token 使用（Grok 兼容 OpenAI 格式）
+        # Token 使用
         usage = getattr(resp, "usage", None)
         if usage:
             send_token = getattr(usage, "prompt_tokens", 0)
@@ -234,8 +327,23 @@ def chat_grok():
             total_token = getattr(usage, "total_tokens", 0)
         else:
             send_token = reply_token = total_token = 0
+            
+        token_usage_dict = {
+            "send_token_usage": send_token,
+            "reply_token_usage": reply_token,
+            "total_tokens": total_token # 注意：这里为了方便传给日志函数，Key稍微做了适配
+        }
 
         app.logger.info(f"Grok 响应内容: {assistant_reply}")
+
+        # 【新增 2】调用成功，更新日志 (记录 Token 和回复)
+        update_grok_log(
+            log_id=log_id,
+            response_content=assistant_reply,
+            usage=token_usage_dict,
+            is_success=True
+        )
+        app.logger.info(f"更新当前请求日志: {log_id}")
 
         return jsonify(
             {
@@ -249,7 +357,17 @@ def chat_grok():
             }
         )
     except Exception as e:
-        app.logger.error(f"Grok 接口发生错误: {str(e)}")
+        error_msg = str(e)
+        app.logger.error(f"Grok 接口发生错误: {error_msg}")
+        
+        # 【新增 3】发生异常，更新日志 (记录错误信息)
+        update_grok_log(
+            log_id=log_id,
+            response_content=None,
+            error_msg=error_msg,
+            is_success=False
+        )
+        
         return jsonify({"error": "服务器内部错误"}), 500
 
 
@@ -275,7 +393,7 @@ def test_grok():
 
     try:
         resp = grok_client.chat.completions.create(
-            model="grok-4",
+            model="grok-4-1-fast-reasoning",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": test_question},

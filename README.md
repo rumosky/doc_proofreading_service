@@ -11,3 +11,8 @@ gunicorn -w 4 -k gevent -b 0.0.0.0:5000 app:app
 ```bash
 poetry run pyinstaller --onefile --noconsole --add-data ".env;." run.py
 ```
+
+
+```bash
+taskkill /F /IM run.exe
+```
