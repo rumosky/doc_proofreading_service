@@ -137,28 +137,27 @@ def update_grok_log(log_id, response_content, usage=None, error_msg=None, is_suc
 
 # --- 新增结束 ---
 
-def load_grok_system_prompt():
+def load_common_system_prompt():
+    """
+    从 prompt.txt 中读取通用的提示词内容
+    """
     try:
-        # 这里用 exe 所在目录，而不是 BASE_DIR（避免取到 sys._MEIPASS）
+        # 确定文件路径（打包后在 exe 同级，开发时在脚本同级）
         exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(exe_dir, "prompt.json")
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("grok_system_prompt", "")
-    except Exception as e:
-        app.logger.error(f"读取 grok_system_prompt 失败: {e}")
-        return ""
+        txt_path = os.path.join(exe_dir, "prompt.txt")
+        
+        if not os.path.exists(txt_path):
+            # 如果文件不存在，创建一个空的，防止报错，或者返回默认提示词
+            app.logger.error(f"找不到提示词文件: {txt_path}")
+            return "You are a helpful assistant." 
 
-def load_chatgpt_system_prompt():
-    try:
-        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(exe_dir, "prompt.json")
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("chatgpt_system_prompt", "")
+        with open(txt_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            return content.strip()
+            
     except Exception as e:
-        app.logger.error(f"读取 prompt.json 失败: {e}")
-        return ""
+        app.logger.error(f"读取 prompt.txt 失败: {e}")
+        return "You are a helpful assistant."
 
 
 def parse_temperature(value):
@@ -286,7 +285,7 @@ def chat_grok():
 
     temperature = parse_temperature(data.get("temperature", None))
     max_tokens = parse_max_tokens(data.get("max_tokens", None))
-    system_prompt = load_grok_system_prompt()
+    system_prompt = load_common_system_prompt()
     
     # 定义模型名称，方便日志记录
     model_name = "grok-4-1-fast-reasoning"
@@ -455,7 +454,7 @@ def chat_chatgpt():
 
     temperature = parse_temperature(data.get("temperature", None))
     max_tokens = parse_max_tokens(data.get("max_tokens", None))
-    system_prompt = load_chatgpt_system_prompt()
+    system_prompt = load_common_system_prompt()
 
     # 构造系统+用户消息
     messages = [
@@ -596,7 +595,7 @@ def chat_chatgpt_proxy():
 
     temperature = parse_temperature(data.get("temperature", None))
     max_tokens = parse_max_tokens(data.get("max_tokens", None))
-    system_prompt = load_chatgpt_system_prompt()
+    system_prompt = load_common_system_prompt()
 
     # 构造系统+用户消息
     messages = [
