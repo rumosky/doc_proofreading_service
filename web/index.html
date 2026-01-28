@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>文档校对助手</title>
+    <link rel="icon" href="./assets/img/favicon.ico" type="image/x-icon" />
+    <link rel="stylesheet" href="./assets/css/index.css" />
+    <style>
+      html,
+      body {
+        height: 100%;
+        min-width: 1240px;
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        overflow: hidden;
+        font-family: Arial, sans-serif;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: inherit;
+      }
+
+      #app {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 10px 40px;
+        box-sizing: border-box;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 10px;
+      }
+
+      .logo-title {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        font-size: 2.3em;
+        font-weight: bold;
+      }
+
+      main {
+        flex: 1;
+        display: flex;
+        gap: 20px;
+        overflow: hidden;
+        min-height: 0;
+        min-width: 0;
+      }
+
+      .chat-history {
+        flex: 1;
+        background: #fafafa;
+        border: 1px solid #e4e7ed;
+        border-radius: 8px;
+        padding: 15px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        min-width: 0;
+        max-height: 100%;
+        height: 100%;
+      }
+
+      .right-panel {
+        width: 40%;
+        min-width: 400px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border: 1px solid #e4e7ed;
+        border-radius: 8px;
+        padding: 15px;
+        background: #fff;
+        min-height: 0;
+        height: 100%;
+      }
+
+      .right-panel textarea {
+        width: 100%;
+        flex: 1;
+        min-height: 0;
+        box-sizing: border-box;
+        resize: none;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.5;
+        margin-bottom: 0;
+        padding: 10px;
+        border-radius: 4px;
+        border: 1px solid #dcdfe6;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+      }
+
+      .right-panel .btn-group {
+        display: flex;
+        gap: 10px;
+        justify-content: space-between;
+        margin-top: 10px;
+        align-items: center;
+      }
+
+      .btn-group-left {
+        display: flex;
+        justify-content: flex-start;
+        text-align: left;
+        align-items: center;
+      }
+
+      .btn-group-right {
+        display: flex;
+        justify-content: flex-end;
+        text-align: right;
+      }
+
+      .message {
+        max-width: 80%;
+        padding: 10px 15px;
+        border-radius: 6px;
+        line-height: 1.6;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+        position: relative;
+      }
+
+      .user-message {
+        align-self: flex-end;
+        background-color: #409eff;
+        color: white;
+        border-bottom-right-radius: 2px;
+      }
+
+      .assistant-message {
+        align-self: flex-start;
+        background-color: #f0f4f8;
+        color: #333;
+        border-bottom-left-radius: 2px;
+      }
+
+      .message-header {
+        font-size: 0.85em;
+        opacity: 0.8;
+        margin-bottom: 5px;
+      }
+
+      .loading-spinner {
+        display: inline-block;
+        width: 18px;
+        height: 18px;
+        border: 3px solid rgba(0, 0, 0, 0.3);
+        border-radius: 50%;
+        border-top-color: #409eff;
+        animation: spinner 1s linear infinite;
+        vertical-align: middle;
+        margin-right: 8px;
+      }
+
+      @keyframes spinner {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .assistant-loading-text {
+        vertical-align: middle;
+        color: #999;
+        font-style: italic;
+      }
+
+      blockquote.thinking-process {
+        margin: 0 0 10px 0;
+        padding: 10px;
+        font-size: 0.85em;
+        font-style: italic;
+        color: #666;
+        background: #f2f2f2;
+        border-left: 3px solid #b6bbc9;
+        border-radius: 4px;
+        white-space: pre-wrap;
+      }
+
+      .token-info {
+        margin: 4px 0 8px 8px;
+        font-size: 0.78em;
+        color: #888;
+        user-select: none;
+      }
+
+      footer {
+        text-align: center;
+        font-size: 14px;
+        color: #999;
+        padding: 10px 0 5px 0;
+        user-select: none;
+      }
+
+      .dialog-footer {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .file-upload-area {
+        border: 2px dashed #409eff;
+        border-radius: 6px;
+        padding: 12px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background-color: #f0f7ff;
+      }
+
+      .file-upload-area:hover {
+        border-color: #66b1ff;
+        background-color: #ecf5ff;
+      }
+
+      .file-upload-area.dragover {
+        border-color: #67c23a;
+        background-color: #f0f9eb;
+        transform: scale(1.02);
+      }
+
+      .file-upload-area input[type="file"] {
+        display: none;
+      }
+
+      .file-upload-text {
+        font-size: 13px;
+        color: #666;
+        margin-bottom: 5px;
+      }
+
+      .file-upload-hint {
+        font-size: 12px;
+        color: #999;
+      }
+
+      .file-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 12px;
+        background-color: #f5f5f5;
+        border-radius: 4px;
+        margin-top: 8px;
+      }
+
+      .file-info .file-name {
+        font-size: 13px;
+        color: #333;
+        font-weight: 500;
+      }
+
+      .file-info .remove-file {
+        background-color: #f56c6c;
+        color: white;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      .file-info .remove-file:hover {
+        background-color: #f23c3c;
+      }
+
+      .upload-loading {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        border-radius: 50%;
+        border-top-color: #409eff;
+        animation: spin 0.8s linear infinite;
+        vertical-align: middle;
+        margin-right: 6px;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="app">
+      <header>
+        <h1 class="logo-title">文档校对助手</h1>
+      </header>
+      <main>
+        <section class="chat-history" ref="chatHistoryRef">
+          <div
+            v-for="(msg, idx) in messages"
+            :key="idx"
+            style="
+              display: flex;
+              flex-direction: column;
+              align-items: flex-start;
+            "
+          >
+            <div
+              v-if="msg.role === 'user'"
+              class="message user-message"
+              style="align-self: flex-end"
+            >
+              <div class="message-header">您 - {{ msg.timestamp }}</div>
+              <div v-html="formatMessageContent(msg.content)"></div>
+            </div>
+            <template v-else>
+              <div class="message assistant-message">
+                <div class="message-header">助手 - {{ msg.timestamp }}</div>
+                <template v-if="msg.loading">
+                  <div>
+                    <span class="loading-spinner"></span>
+                    <span class="assistant-loading-text">正在思考...</span>
+                  </div>
+                </template>
+                <template v-else>
+                  <blockquote
+                    v-if="msg.displayedThinkingProcess"
+                    class="thinking-process"
+                  >
+                    {{ msg.displayedThinkingProcess }}
+                  </blockquote>
+                  <div
+                    v-html="formatMessageContent(msg.displayedContent)"
+                  ></div>
+                </template>
+              </div>
+              <div v-if="msg.token_info" class="token-info">
+                响应时间: {{ formatResponseTime(msg.response_time_ms) }} |
+                回复Token: {{ msg.token_info.reply_token_usage || 0 }}
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <section class="right-panel">
+          <textarea
+            v-model="userInput"
+            placeholder="请输入您的内容..."
+            @keydown="onTextareaKeydown"
+          ></textarea>
+          
+          <div class="file-upload-area" id="uploadArea" @click="triggerFileInput">
+            <input type="file" ref="fileInputRef" @change="handleFileSelect" accept=".doc,.docx" />
+            <div class="file-upload-text">
+              <span v-if="!selectedFile">📎 拖拽文件到此处或点击选择文件</span>
+              <span v-else-if="isUploading"><span class="upload-loading"></span>正在上传: {{ selectedFile.name }}</span>
+              <span v-else-if="isSending"><span class="upload-loading"></span>正在处理: {{ selectedFile.name }}</span>
+              <span v-else>📎 已选择文件: {{ selectedFile.name }}</span>
+            </div>
+            <div class="file-upload-hint">支持 .doc 和 .docx 格式</div>
+            <div v-if="selectedFile" class="file-info">
+              <span class="file-name">{{ selectedFile.name }}</span>
+              <button class="remove-file" @click.stop="removeFile">移除</button>
+            </div>
+          </div>
+
+          <div class="btn-group">
+            <div class="btn-group-left">
+              <label style="margin-right: 10px">模型选择</label>
+              <el-select
+                v-model="externalModelType"
+                placeholder="选择模型"
+                style="width: 180px"
+              >
+                <el-option
+                  v-for="item in modelTypeOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                ></el-option>
+              </el-select>
+
+              <el-button
+                v-if="externalModelType === 'grok'"
+                type="success"
+                size="small"
+                @click="testGrok"
+                style="margin-left: 10px"
+                >测试连通性</el-button
+              >
+
+              <el-button
+                v-if="externalModelType === 'chatgpt'"
+                type="success"
+                size="small"
+                @click="testChatgpt"
+                style="margin-left: 10px"
+                >测试连通性</el-button
+              >
+
+              <el-button
+                v-if="externalModelType === 'chatgptproxy'"
+                type="success"
+                size="small"
+                @click="testChatgptProxy"
+                style="margin-left: 10px"
+                >测试连通性</el-button
+              >
+            </div>
+            <div class="btn-group-right">
+              <el-button @click="openDialog"
+                ><el-icon> <Setting /> </el-icon>设置</el-button
+              >
+              <el-button type="warning" @click="confirmClearChat"
+                ><el-icon> <Delete /> </el-icon>清空聊天</el-button
+              >
+              <el-button @click="clearInput"
+                ><el-icon> <Close /> </el-icon>清空输入框</el-button
+              >
+              <el-button
+                type="primary"
+                :loading="isSending || isUploading"
+                :disabled="(!userInput.trim() && !hasUploadedFile) || isSending || isUploading"
+                @click="sendMessage"
+                ><el-icon> <Position /> </el-icon>发送</el-button
+              >
+            </div>
+          </div>
+
+          <el-dialog
+            title="模型设置"
+            v-model="showSettingsDialog"
+            width="500px"
+            :before-close="handleDialogClose"
+            align-center
+            append-to-body
+          >
+            <div
+              style="
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+              "
+            >
+              <label style="flex-shrink: 0"
+                >温度值: {{ temperature.toFixed(2) }}</label
+              >
+              <el-tooltip placement="top">
+                <template #content>
+                  控制生成文本的随机程度，值越大越随机<br />严谨稳定建议设置0.3，随机性高建议设置为1</template
+                >
+                <el-icon
+                  style="font-size: 16px; color: #909399; cursor: pointer"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 1024 1024"
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M512 64a448 448 0 1 1 0 896.064A448 448 0 0 1 512 64m67.2 275.072c33.28 0 60.288-23.104 60.288-57.344s-27.072-57.344-60.288-57.344c-33.28 0-60.16 23.104-60.16 57.344s26.88 57.344 60.16 57.344M590.912 699.2c0-6.848 2.368-24.64 1.024-34.752l-52.608 60.544c-10.88 11.456-24.512 19.392-30.912 17.28a12.992 12.992 0 0 1-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096 0-108.992 44.736-148.48 101.504 0 6.784-1.28 23.68.064 33.792l52.544-60.608c10.88-11.328 23.552-19.328 29.952-17.152a12.8 12.8 0 0 1 7.808 16.128L388.48 728.576c-10.048 32.256 8.96 63.872 55.04 71.04 67.84 0 107.904-43.648 147.456-100.416z"
+                    ></path>
+                  </svg>
+                </el-icon>
+              </el-tooltip>
+            </div>
+            <el-slider
+              v-model="temperature"
+              :min="0"
+              :max="2"
+              :step="0.1"
+              show-tooltip
+              size="small"
+            ></el-slider>
+
+            <div
+              style="
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+              "
+            >
+              <label style="flex-shrink: 0"
+                >最大回复长度: {{ maxTokens }}</label
+              >
+              <el-tooltip placement="top">
+                <template #content>
+                  控制模型单次回复的最大长度<br />一般不用动，输入文本太长的时候建议直接拉满</template
+                >
+                <el-icon
+                  style="font-size: 16px; color: #909399; cursor: pointer"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 1024 1024"
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M512 64a448 448 0 1 1 0 896.064A448 448 0 0 1 512 64m67.2 275.072c33.28 0 60.288-23.104 60.288-57.344s-27.072-57.344-60.288-57.344c-33.28 0-60.16 23.104-60.16 57.344s26.88 57.344 60.16 57.344M590.912 699.2c0-6.848 2.368-24.64 1.024-34.752l-52.608 60.544c-10.88 11.456-24.512 19.392-30.912 17.28a12.992 12.992 0 0 1-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096 0-108.992 44.736-148.48 101.504 0 6.784-1.28 23.68.064 33.792l52.544-60.608c10.88-11.328 23.552-19.328 29.952-17.152a12.8 12.8 0 0 1 7.808 16.128L388.48 728.576c-10.048 32.256 8.96 63.872 55.04 71.04 67.84 0 107.904-43.648 147.456-100.416z"
+                    ></path>
+                  </svg>
+                </el-icon>
+              </el-tooltip>
+            </div>
+            <el-slider
+              v-model="maxTokens"
+              :min="0"
+              :max="32768"
+              :step="1024"
+              show-tooltip
+              size="small"
+              @input="limitMaxTokens"
+            ></el-slider>
+
+            <div
+              v-if="showUseStream"
+              style="display: flex; align-items: center; gap: 6px"
+            >
+              <el-switch
+                v-model="useStream"
+                active-text="流式输出"
+                inactive-text="普通输出"
+              ></el-switch>
+              <el-tooltip placement="top">
+                <template #content>
+                  普通输出：模型一次性返回结果<br />
+                  流式输出：模型分段返回结果<br />建议卡顿的时候切换一下进行尝试
+                </template>
+                <el-icon
+                  style="font-size: 16px; color: #909399; cursor: pointer"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 1024 1024"
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M512 64a448 448 0 1 1 0 896.064A448 448 0 0 1 512 64m67.2 275.072c33.28 0 60.288-23.104 60.288-57.344s-27.072-57.344-60.288-57.344c-33.28 0-60.16 23.104-60.16 57.344s26.88 57.344 60.16 57.344M590.912 699.2c0-6.848 2.368-24.64 1.024-34.752l-52.608 60.544c-10.88 11.456-24.512 19.392-30.912 17.28a12.992 12.992 0 0 1-8.256-14.72l87.68-276.992c7.168-35.136-12.544-67.2-54.336-71.296-44.096 0-108.992 44.736-148.48 101.504 0 6.784-1.28 23.68.064 33.792l52.544-60.608c10.88-11.328 23.552-19.328 29.952-17.152a12.8 12.8 0 0 1 7.808 16.128L388.48 728.576c-10.048 32.256 8.96 63.872 55.04 71.04 67.84 0 107.904-43.648 147.456-100.416z"
+                    ></path>
+                  </svg>
+                </el-icon>
+              </el-tooltip>
+            </div>
+            <template #footer>
+              <div class="dialog-footer">
+                <el-button @click="closeDialog">取消</el-button>
+                <el-button type="primary" @click="confirmSettings"
+                  >确定</el-button
+                >
+              </div>
+            </template>
+          </el-dialog>
+        </section>
+      </main>
+      <footer>
+        Copyright © {{ currentYear }} 文档校对助手 | Powered by LBB | Version
+        3.0.0
+      </footer>
+    </div>
+
+    <script src="./assets/js/vue.global.prod.js"></script>
+    <script src="./assets/js/index.full.js"></script>
+    <script src="./assets/js/index.iife.min.js"></script>
+
+    <script>
+      const { createApp, ref, onMounted, nextTick, watch, computed } = Vue;
+      const { ElMessageBox, ElMessage, ElButton } = ElementPlus;
+      const { Delete, Close, Position, Setting, InfoFilled } =
+        ElementPlusIconsVue;
+
+      createApp({
+        setup() {
+          const API_BASE_URL = "http://127.0.0.1:5000";
+          let apiUrl = `${API_BASE_URL}/chat`;
+          const streamApiUrl = `${API_BASE_URL}/chat/stream`;
+          const workflowApiUrl = `${API_BASE_URL}/chat/workflow`;
+
+          const messages = ref([]);
+          const userInput = ref("");
+          const isSending = ref(false);
+          const chatHistoryRef = ref(null);
+          const currentYear = new Date().getFullYear();
+          const useStream = ref(false);
+          const showUseStream = ref(true);
+          const showSettingsDialog = ref(false);
+          const savedTemperature = ref(1.0);
+          const savedMaxTokens = ref(4096);
+          const savedUseStream = ref(false);
+
+          const temperature = ref(1.0);
+          const maxTokens = ref(4096);
+          const typingContent = ref("");
+          const externalModelType = ref("doubao");
+          const dialogModelType = ref(externalModelType.value);
+          const modelTypeOptions = [
+            { label: "豆包", value: "doubao" },
+            { label: "ChatGPT代理", value: "chatgptproxy" },
+            { label: "ChatGPT", value: "chatgpt" },
+            { label: "Grok", value: "grok" },
+          ];
+
+          const selectedFile = ref(null);
+          const fileInputRef = ref(null);
+          const uploadedFileId = ref(null);
+          const isUploading = ref(false);
+
+          const hasUploadedFile = computed(() => {
+            return uploadedFileId.value !== null && uploadedFileId.value !== undefined && uploadedFileId.value !== '';
+          });
+
+          const formatMessageContent = (content) => {
+            return (content || "").replace(/\n/g, "<br>");
+          };
+          const limitMaxTokens = (value) => {
+            if (value < 4096) {
+              maxTokens.value = 4096;
+            }
+          };
+          watch(externalModelType, (newModel) => {
+            showUseStream.value = newModel === "doubao";
+          });
+
+          const openDialog = () => {
+            temperature.value = savedTemperature.value;
+            maxTokens.value = savedMaxTokens.value;
+            useStream.value = savedUseStream.value;
+            dialogModelType.value = externalModelType.value;
+            showSettingsDialog.value = true;
+          };
+
+          const closeDialog = () => {
+            temperature.value = savedTemperature.value;
+            maxTokens.value = savedMaxTokens.value;
+            useStream.value = savedUseStream.value;
+            showSettingsDialog.value = false;
+          };
+          const confirmSettings = () => {
+            savedTemperature.value = temperature.value;
+            savedMaxTokens.value = maxTokens.value;
+            savedUseStream.value = useStream.value;
+            externalModelType.value = dialogModelType.value;
+            showSettingsDialog.value = false;
+            ElMessage.success("模型设置已保存");
+          };
+
+          const handleDialogClose = (done) => {
+            temperature.value = savedTemperature.value;
+            maxTokens.value = savedMaxTokens.value;
+            useStream.value = savedUseStream.value;
+            done();
+          };
+
+          const scrollToBottom = async () => {
+            await nextTick();
+            const el = chatHistoryRef.value;
+            if (el) {
+              el.scrollTop = el.scrollHeight;
+            }
+          };
+
+          const formatResponseTime = (ms) => {
+            if (!ms || ms <= 0) return "0秒";
+            const totalSeconds = Math.round(ms / 1000);
+            if (totalSeconds < 60) {
+              return `${totalSeconds}秒`;
+            } else {
+              const minutes = Math.floor(totalSeconds / 60);
+              const seconds = totalSeconds % 60;
+              return `${minutes}分钟${seconds}秒`;
+            }
+          };
+
+          const testGrok = async () => {
+            try {
+              const resp = await fetch(`${API_BASE_URL}/chat/grok/test`);
+              const data = await resp.json();
+              if (!data.success) {
+                ElMessage.error("当前模型不可用！");
+                return;
+              }
+              ElMessage.success(`可用，延迟：${data.latency_ms} ms`);
+            } catch (err) {
+              ElMessage.error(`请求错误：${err.message}`);
+            }
+          };
+
+          const testChatgpt = async () => {
+            try {
+              const resp = await fetch(`${API_BASE_URL}/chat/chatgpt/test`);
+              const data = await resp.json();
+              if (!data.success) {
+                ElMessage.error("当前模型不可用！");
+                return;
+              }
+              ElMessage.success(`可用，延迟：${data.latency_ms} ms`);
+            } catch (err) {
+              ElMessage.error(`请求错误：${err.message}`);
+            }
+          };
+
+          const testChatgptProxy = async () => {
+            try {
+              const resp = await fetch(`${API_BASE_URL}/chat/chatgpt/proxy/test`);
+              const data = await resp.json();
+              if (!data.success) {
+                ElMessage.error("当前模型不可用！");
+                return;
+              }
+              ElMessage.success(`可用，延迟：${data.latency_ms} ms`);
+            } catch (err) {
+              ElMessage.error(`请求错误：${err.message}`);
+            }
+          };
+
+          const triggerFileInput = () => {
+            if (fileInputRef.value) {
+              fileInputRef.value.click();
+            }
+          };
+
+          const handleFileSelect = async (event) => {
+            const file = event.target.files[0];
+            if (file) {
+              if (file.type === 'application/msword' || file.name.endsWith('.docx')) {
+                selectedFile.value = file;
+                await uploadFile();
+              } else {
+                ElMessage.error('仅支持 .doc 和 .docx 格式的文件');
+              }
+            }
+          };
+
+          const uploadFile = async () => {
+            if (!selectedFile.value) return;
+
+            try {
+              isUploading.value = true;
+              const formData = new FormData();
+              formData.append('file', selectedFile.value);
+
+              const response = await fetch(`${API_BASE_URL}/chat/upload`, {
+                method: 'POST',
+                body: formData
+              });
+
+              const data = await response.json();
+
+              if (!response.ok) {
+                throw new Error(data.error || "文件上传失败");
+              }
+
+              uploadedFileId.value = data.file_id;
+              ElMessage.success("文件上传成功");
+            } catch (err) {
+              ElMessage.error("文件上传失败：" + (err.message || "未知错误"));
+              selectedFile.value = null;
+              if (fileInputRef.value) {
+                fileInputRef.value.value = '';
+              }
+            } finally {
+              isUploading.value = false;
+            }
+          };
+
+          const removeFile = () => {
+            selectedFile.value = null;
+            uploadedFileId.value = null;
+            if (fileInputRef.value) {
+              fileInputRef.value.value = '';
+            }
+          };
+
+          const initDragAndDrop = () => {
+            const uploadArea = document.getElementById('uploadArea');
+            if (uploadArea) {
+              uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+              });
+              uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+              });
+              uploadArea.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                  if (file.type === 'application/msword' || file.name.endsWith('.docx')) {
+                    selectedFile.value = file;
+                    if (fileInputRef.value) {
+                      const dataTransfer = new DataTransfer();
+                      dataTransfer.items.add(file);
+                      fileInputRef.value.files = dataTransfer.files;
+                    }
+                    await uploadFile();
+                  } else {
+                    ElMessage.error('仅支持 .doc 和 .docx 格式的文件');
+                  }
+                }
+              });
+            }
+          };
+
+          const initWelcomeMessage = () => {
+            messages.value = [
+              {
+                role: "assistant",
+                content: "欢迎使用文档校对助手！请在右侧输入您的内容或上传文档进行校验。",
+                displayedThinkingProcess: "",
+                displayedContent: "欢迎使用文档校对助手！请在右侧输入您的内容或上传文档进行校验。",
+                timestamp: new Date().toLocaleString("zh-CN"),
+                loading: false,
+                thinking_process: "",
+                token_info: null,
+                response_time_ms: 0,
+              },
+            ];
+            scrollToBottom();
+          };
+
+          const sendMessage = async () => {
+            const input = userInput.value.trim();
+            // 检查是否有输入内容或已上传的文件ID
+            if ((!input && !uploadedFileId.value) || isSending.value) return;
+
+            const userContent = selectedFile.value ? `[上传文件: ${selectedFile.value.name}]\n${input}` : input;
+            messages.value.push({
+              role: "user",
+              content: userContent,
+              timestamp: new Date().toLocaleString("zh-CN"),
+              loading: false,
+              thinking_process: "",
+              token_info: null,
+              response_time_ms: 0,
+            });
+
+            const assistantMsg = {
+              role: "assistant",
+              content: "",
+              thinking_process: "",
+              displayedThinkingProcess: "",
+              displayedContent: "",
+              token_info: null,
+              response_time_ms: 0,
+              timestamp: new Date().toLocaleString("zh-CN"),
+              loading: true,
+            };
+            messages.value.push(assistantMsg);
+
+            userInput.value = "";
+            isSending.value = true;
+            await scrollToBottom();
+
+            try {
+              let requestData;
+              if (uploadedFileId.value) {
+                // 如果有已上传的文件ID，使用文件ID作为file参数
+                requestData = {
+                  file: uploadedFileId.value
+                };
+              } else {
+                // 否则使用文本输入
+                requestData = {
+                  input: input
+                };
+              }
+
+              const response = await fetch(workflowApiUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestData)
+              });
+
+              const data = await response.json();
+
+              if (!response.ok) {
+                throw new Error(data.error || "请求失败");
+              }
+
+              assistantMsg.loading = false;
+              assistantMsg.content = data.result || "";
+              assistantMsg.displayedContent = assistantMsg.content;
+              await scrollToBottom();
+
+              // 发送成功后，清除已上传的文件信息
+              uploadedFileId.value = null;
+              selectedFile.value = null;
+              if (fileInputRef.value) {
+                fileInputRef.value.value = '';
+              }
+            } catch (err) {
+              assistantMsg.loading = false;
+              assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
+              ElMessage.error("文件处理失败：" + (err.message || "未知错误"));
+              await scrollToBottom();
+            } finally {
+              isSending.value = false;
+            }
+            return;
+
+            const requestBody = {
+              message: input,
+              temperature: temperature.value,
+              max_tokens: maxTokens.value,
+              stream: useStream.value,
+            };
+
+            if (externalModelType.value === "grok") {
+              apiUrl = `${API_BASE_URL}/chat/grok`;
+            } else if (externalModelType.value === "chatgpt") {
+              apiUrl = `${API_BASE_URL}/chat/chatgpt`;
+            } else if (externalModelType.value === "chatgptproxy") {
+              apiUrl = `${API_BASE_URL}/chat/chatgpt/proxy`;
+            }
+
+            if (!useStream.value) {
+              try {
+                const response = await fetch(apiUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(requestBody),
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                  throw new Error(data.error || "请求失败");
+                }
+
+                assistantMsg.loading = false;
+                assistantMsg.thinking_process = (data.thinking_process || "").trim();
+                assistantMsg.content = data.reply || "";
+                assistantMsg.token_info = data.token_usage || null;
+                assistantMsg.response_time_ms = data.response_time_ms || 0;
+                assistantMsg.displayedThinkingProcess = assistantMsg.thinking_process;
+                assistantMsg.displayedContent = assistantMsg.content;
+                await scrollToBottom();
+              } catch (err) {
+                assistantMsg.loading = false;
+                assistantMsg.displayedThinkingProcess = "";
+                assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
+                ElMessage.error("发送失败：" + (err.message || "未知错误"));
+                await scrollToBottom();
+              } finally {
+                isSending.value = false;
+              }
+            } else {
+              try {
+                const controller = new AbortController();
+                const response = await fetch(streamApiUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(requestBody),
+                  signal: controller.signal,
+                });
+
+                if (!response.ok || !response.body) {
+                  throw new Error("流式接口请求失败");
+                }
+
+                assistantMsg.loading = false;
+                typingContent.value = "";
+                assistantMsg.displayedContent = "";
+                assistantMsg.displayedThinkingProcess = "";
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+
+                let done = false;
+                let buffer = "";
+
+                while (!done) {
+                  const { value, done: doneReading } = await reader.read();
+                  if (doneReading) {
+                    done = true;
+                  }
+                  if (value) {
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                      const trimmed = line.trim();
+                      if (!trimmed) continue;
+                      if (trimmed === "[DONE]") {
+                        done = true;
+                        break;
+                      }
+                      try {
+                        const json = JSON.parse(trimmed);
+                        if (json.choices && json.choices.length > 0) {
+                          const choice = json.choices[0];
+                          const delta = choice.delta || {};
+                          if (delta.reasoning_content) {
+                            assistantMsg.displayedThinkingProcess += delta.reasoning_content;
+                          }
+                          if (delta.content) {
+                            typingContent.value += delta.content;
+                            assistantMsg.displayedContent = typingContent.value;
+                          }
+                        } else {
+                          if (json.bot_usage) {
+                            const usage = json.bot_usage;
+                            assistantMsg.token_info = {
+                              reply_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].completion_tokens || 0 : 0,
+                              prompt_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].prompt_tokens || 0 : 0,
+                              total_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].total_tokens || 0 : 0,
+                            };
+                          }
+                          if (json.response_time_ms !== undefined) {
+                            assistantMsg.response_time_ms = json.response_time_ms;
+                          }
+                          if (json.done) {
+                            done = true;
+                          }
+                        }
+                      } catch (e) {
+                        console.warn("解析流式数据异常", e);
+                      }
+                    }
+                  }
+                  await scrollToBottom();
+                }
+              } catch (err) {
+                assistantMsg.loading = false;
+                assistantMsg.displayedThinkingProcess = "";
+                assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
+                ElMessage.error("发送失败：" + (err.message || "未知错误"));
+              } finally {
+                isSending.value = false;
+              }
+            }
+          };
+
+          const onTextareaKeydown = (event) => {
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault();
+              sendMessage();
+            }
+          };
+
+          const clearInput = () => {
+            userInput.value = "";
+          };
+
+          const confirmClearChat = () => {
+            ElMessageBox.confirm("确定要清空所有聊天记录吗？", "清空聊天", {
+              confirmButtonText: "确定",
+              cancelButtonText: "取消",
+              type: "warning",
+            })
+              .then(() => {
+                messages.value = [];
+                initWelcomeMessage();
+                ElMessage.success("聊天记录已清空");
+              })
+              .catch(() => {});
+          };
+
+          onMounted(() => {
+            initWelcomeMessage();
+            initDragAndDrop();
+          });
+
+          return {
+            messages,
+            userInput,
+            isSending,
+            chatHistoryRef,
+            formatMessageContent,
+            sendMessage,
+            clearInput,
+            confirmClearChat,
+            currentYear,
+            onTextareaKeydown,
+            formatResponseTime,
+            useStream,
+            showUseStream,
+            temperature,
+            maxTokens,
+            showSettingsDialog,
+            openDialog,
+            closeDialog,
+            confirmSettings,
+            handleDialogClose,
+            limitMaxTokens,
+            modelTypeOptions,
+            testChatgpt,
+            testGrok,
+            testChatgptProxy,
+            externalModelType,
+            selectedFile,
+            fileInputRef,
+            triggerFileInput,
+            handleFileSelect,
+            removeFile,
+            isUploading,
+            uploadedFileId,
+            hasUploadedFile,
+          };
+        },
+      })
+        .use(ElementPlus)
+        .component("Delete", Delete)
+        .component("Close", Close)
+        .component("Position", Position)
+        .component("Setting", Setting)
+        .component("InfoFilled", InfoFilled)
+        .mount("#app");
+    </script>
+  </body>
+</html>

@@ -66,6 +66,48 @@ chatgpt_client = OpenAI(api_key=chatgpt_api_key, base_url=chatgpt_base_url)
 app = Flask(__name__)
 CORS(app)  # 允许所有跨域请求，前端 localhost 调试可用
 
+# --- 扣子工作流配置 ---
+COZE_WORKFLOW_ID = os.getenv("COZE_WORKFLOW_ID")
+COZE_BASE_URL = os.getenv("COZE_BASE_URL")
+
+# 从.env文件中读取COZE JWT配置
+COZE_CLIENT_TYPE = os.getenv("COZE_CLIENT_TYPE")
+COZE_CLIENT_ID = os.getenv("COZE_CLIENT_ID")
+COZE_COZE_WWW_BASE = os.getenv("COZE_COZE_WWW_BASE")
+COZE_COZE_API_BASE = os.getenv("COZE_COZE_API_BASE")
+COZE_PRIVATE_KEY_PATH = os.getenv("COZE_PRIVATE_KEY_PATH")
+COZE_PUBLIC_KEY_ID = os.getenv("COZE_PUBLIC_KEY_ID")
+
+# 临时文件目录
+TEMP_DIR = os.path.join(BASE_DIR, "temp")
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# 加载扣子JWT配置
+from cozepy import load_oauth_app_from_config, JWTOAuthApp
+import json
+
+coze_oauth_app = None
+# 从.env文件构建JWT配置
+if all([COZE_CLIENT_TYPE, COZE_CLIENT_ID, COZE_COZE_WWW_BASE, COZE_COZE_API_BASE, COZE_PRIVATE_KEY_PATH, COZE_PUBLIC_KEY_ID]):
+    try:
+        # 读取私钥文件
+        private_key_path = os.path.join(BASE_DIR, COZE_PRIVATE_KEY_PATH)
+        with open(private_key_path, "r", encoding="utf-8") as f:
+            COZE_PRIVATE_KEY = f.read()
+        
+        config = {
+            "client_type": COZE_CLIENT_TYPE,
+            "client_id": COZE_CLIENT_ID,
+            "coze_www_base": COZE_COZE_WWW_BASE,
+            "coze_api_base": COZE_COZE_API_BASE,
+            "private_key": COZE_PRIVATE_KEY,
+            "public_key_id": COZE_PUBLIC_KEY_ID
+        }
+        coze_oauth_app = load_oauth_app_from_config(config)
+        app.logger.info("成功从.env和私钥文件加载扣子JWT配置")
+    except Exception as e:
+        app.logger.error(f"从.env和私钥文件加载扣子JWT配置失败: {str(e)}")
+
 # 定义一个不使用代理的配置，强制直连
 NO_PROXY = {
     "http": None,
@@ -764,6 +806,255 @@ def test_chatgpt_proxy():
         )
 
 
+# --- 扣子工作流接口 ---
+@app.route("/chat/upload", methods=["POST"])
+def coze_upload():
+    """
+    调用扣子文件上传接口，获取file ID
+    """
+    try:
+        # 获取上传的文件
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "未提供文件"}), 400
+        
+        # 检查文件类型
+        if not (file.filename.endswith(".doc") or file.filename.endswith(".docx")):
+            app.logger.warning("收到不支持的文件类型: %s", file.filename)
+            return jsonify({"error": "仅支持 .doc 和 .docx 格式的文件"}), 400
+        
+        # 获取access_token
+        access_token = None
+        if coze_oauth_app:
+            # 使用JWT获取access_token
+            oauth_token = coze_oauth_app.get_access_token()
+            access_token = oauth_token.access_token
+            app.logger.info("使用JWT获取到access_token")
+        else:
+            # 只使用JWT认证，不使用API_KEY
+            app.logger.error("未配置扣子JWT配置")
+            return jsonify({"error": "未配置扣子JWT配置"}), 500
+        
+        # 确保COZE_BASE_URL没有任何不可见字符
+        base_url = COZE_BASE_URL.strip()
+        # 移除可能存在的尾部斜杠
+        base_url = base_url.rstrip("/")
+        
+        app.logger.info("开始上传文件到扣子: %s", file.filename)
+        
+        # 调用扣子文件上传接口
+        upload_url = f"{base_url}/files/upload"
+        app.logger.info(f"扣子文件上传API URL: {upload_url}")
+        
+        # 准备文件上传请求
+        upload_files = {
+            "file": (file.filename, file.stream, file.mimetype)
+        }
+        
+        upload_headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+        
+        # 发送文件上传请求
+        upload_response = requests.post(
+            upload_url,
+            headers=upload_headers,
+            files=upload_files,
+            timeout=60
+        )
+        
+        upload_response.raise_for_status()
+        upload_result = upload_response.json()
+        app.logger.info(f"文件上传响应: {upload_result}")
+        
+        # 提取file_id
+        file_id = upload_result.get("data", {}).get("id")
+        if not file_id:
+            app.logger.error("文件上传失败，未返回file_id")
+            return jsonify({"error": "文件上传失败，未返回file_id"}), 500
+        
+        app.logger.info(f"文件上传成功，获取到file_id: {file_id}")
+        return jsonify({"file_id": file_id})
+    except requests.exceptions.RequestException as e:
+        # 捕获并记录更详细的错误信息
+        error_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                # 尝试获取响应内容
+                response_content = e.response.content.decode('utf-8')
+                error_msg = f"{error_msg}\n响应内容: {response_content}"
+            except Exception:
+                # 如果无法解码响应内容，至少记录状态码
+                error_msg = f"{error_msg}\n状态码: {e.response.status_code}"
+        app.logger.error("扣子文件上传API请求失败: %s", error_msg)
+        return jsonify({"error": f"文件上传失败: {str(e)}"}), 500
+    except Exception as e:
+        app.logger.error("处理文件上传请求时发生错误: %s", str(e))
+        return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
+
+
+@app.route("/chat/workflow", methods=["POST"])
+def coze_workflow():
+    """
+    调用扣子工作流接口
+    支持两种调用方式：
+    1. 使用file_id和提供文本输入
+    2. 直接提供文本输入
+    """
+    try:
+        # 获取请求数据，支持JSON格式
+        data = request.get_json() or {}
+        
+        # 获取file参数（已上传的文件ID）
+        file_id = data.get("file")
+        
+        # 获取文本输入
+        input_text = data.get("input", "").strip()
+        
+        # 获取access_token
+        access_token = None
+        if coze_oauth_app:
+            # 使用JWT获取access_token
+            oauth_token = coze_oauth_app.get_access_token()
+            access_token = oauth_token.access_token
+            app.logger.info("使用JWT获取到access_token")
+        else:
+            # 只使用JWT认证，不使用API_KEY
+            app.logger.error("未配置扣子JWT配置")
+            return jsonify({"error": "未配置扣子JWT配置"}), 500
+        
+        # 确保COZE_BASE_URL没有任何不可见字符
+        base_url = COZE_BASE_URL.strip()
+        # 移除可能存在的尾部斜杠
+        base_url = base_url.rstrip("/")
+        
+        # 构建扣子工作流请求 - 使用流式接口
+        workflow_url = f"{base_url}/workflow/stream_run"
+        app.logger.info(f"扣子工作流API URL: {workflow_url}")
+        
+        # 准备请求数据
+        # 如果有file_id，将其作为parameters的一部分
+        if file_id:
+            # 正确的格式：将file_id作为parameters的一个属性，值为包含file_id的JSON字符串
+            parameters = {
+                "file": json.dumps({"file_id": file_id}, ensure_ascii=False)
+            }
+        else:
+            parameters = {
+                "input": input_text
+            }
+        
+        # 构造请求数据
+        data = {
+            "workflow_id": str(COZE_WORKFLOW_ID),  # 确保是字符串
+            "parameters": json.dumps(parameters, ensure_ascii=False)
+        }
+        
+        # 添加调试日志
+        app.logger.info(f"请求参数: workflow_id={COZE_WORKFLOW_ID}, parameters={parameters}, file_id={file_id}")
+        
+        # 调用扣子工作流API - 始终使用application/json格式
+        app.logger.info("调用扣子工作流流式API，输入: %s, 是否包含file_id: %s", input_text, bool(file_id))
+        
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(
+            workflow_url,
+            headers=headers,
+            json=data,  # 使用json参数，自动处理Content-Type
+            stream=True,  # 启用流式响应
+            timeout=60
+        )
+        
+        # 处理响应状态
+        response.raise_for_status()
+        
+        # 处理响应，解析返回的结果
+        try:
+            # 读取所有响应内容
+            response_content = response.content.decode('utf-8')
+            app.logger.info(f"响应内容: {response_content}")
+            
+            # 解析SSE格式的响应
+            events = []
+            current_event = {}
+            
+            for line in response_content.split('\n'):
+                line = line.strip()
+                if not line:
+                    # 空行表示事件结束
+                    if current_event:
+                        events.append(current_event)
+                        current_event = {}
+                elif line.startswith('event: '):
+                    current_event['event'] = line[7:]
+                elif line.startswith('data: '):
+                    if 'data' not in current_event:
+                        current_event['data'] = []
+                    current_event['data'].append(line[6:])
+            
+            # 处理所有事件
+            for event in events:
+                if event.get('event') == 'Message' and event.get('data'):
+                    data_str = ''.join(event['data'])
+                    try:
+                        # 解析JSON
+                        result = json.loads(data_str)
+                        # 提取content字段
+                        content_str = result.get('content', '')
+                        app.logger.info(f"Content字段: {content_str}")
+                        if content_str:
+                            try:
+                                # 解析content字段中的JSON
+                                content = json.loads(content_str)
+                                # 根据是否有file_id，返回不同的内容
+                                if file_id:
+                                    # 有文件上传，返回file_result
+                                    file_result = content.get('file_result', '')
+                                    if file_result:
+                                        return jsonify({"result": file_result})
+                                else:
+                                    # 只有文本输入，返回result
+                                    text_result = content.get('result', '')
+                                    if text_result:
+                                        return jsonify({"result": text_result})
+                            except json.JSONDecodeError as e:
+                                # 如果content不是JSON格式，直接返回
+                                app.logger.error(f"解析content字段失败: {e}")
+                                return jsonify({"result": content_str})
+                    except json.JSONDecodeError as e:
+                        app.logger.error(f"解析响应JSON失败: {e}")
+                        return jsonify({"error": f"解析响应失败: {e}"}), 500
+            
+            # 如果没有找到有用的结果，返回空结果
+            return jsonify({"result": ""})
+        except Exception as e:
+            app.logger.error("处理响应时发生错误: %s", str(e))
+            return jsonify({"error": f"处理响应时发生错误: {str(e)}"}), 500
+        finally:
+            # 确保响应被关闭
+            response.close()
+    except requests.exceptions.RequestException as e:
+        # 捕获并记录更详细的错误信息
+        error_msg = str(e)
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                # 尝试获取响应内容
+                response_content = e.response.content.decode('utf-8')
+                error_msg = f"{error_msg}\n响应内容: {response_content}"
+            except Exception:
+                # 如果无法解码响应内容，至少记录状态码
+                error_msg = f"{error_msg}\n状态码: {e.response.status_code}"
+        app.logger.error("扣子工作流API请求失败: %s", error_msg)
+        return jsonify({"error": f"调用扣子工作流失败: {str(e)}"}), 500
+    except Exception as e:
+        app.logger.error("处理扣子工作流请求时发生错误: %s", str(e))
+        return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
+
+
 # 调试开发
-# if __name__ == "__main__":
-#     app.run(debug=False, host="0.0.0.0", port=5000)
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
