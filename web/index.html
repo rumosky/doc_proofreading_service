@@ -353,7 +353,8 @@
             @keydown="onTextareaKeydown"
           ></textarea>
           
-          <div class="file-upload-area" id="uploadArea" @click="triggerFileInput">
+          <!-- 只有当模型选择为豆包时，才显示上传文件功能 -->
+          <div v-if="externalModelType === 'doubao'" class="file-upload-area" id="uploadArea" @click="triggerFileInput">
             <input type="file" ref="fileInputRef" @change="handleFileSelect" accept=".doc,.docx" />
             <div class="file-upload-text">
               <span v-if="!selectedFile">📎 拖拽文件到此处或点击选择文件</span>
@@ -567,6 +568,7 @@
     <script src="./assets/js/vue.global.prod.js"></script>
     <script src="./assets/js/index.full.js"></script>
     <script src="./assets/js/index.iife.min.js"></script>
+    <script src="./assets/js/marked.min.js"></script>
 
     <script>
       const { createApp, ref, onMounted, nextTick, watch, computed } = Vue;
@@ -615,7 +617,9 @@
           });
 
           const formatMessageContent = (content) => {
-            return (content || "").replace(/\n/g, "<br>");
+            if (!content) return "";
+            // 使用marked.js渲染markdown为HTML，禁用headerIds以消除警告
+            return marked.parse(content, { headerIds: false });
           };
           const limitMaxTokens = (value) => {
             if (value < 4096) {
@@ -624,6 +628,14 @@
           };
           watch(externalModelType, (newModel) => {
             showUseStream.value = newModel === "doubao";
+            // 当模型切换时，清除已上传的文件信息
+            if (newModel !== "doubao") {
+              selectedFile.value = null;
+              uploadedFileId.value = null;
+              if (fileInputRef.value) {
+                fileInputRef.value.value = '';
+              }
+            }
           });
 
           const openDialog = () => {
@@ -854,47 +866,191 @@
             messages.value.push(assistantMsg);
 
             userInput.value = "";
-            isSending.value = true;
-            await scrollToBottom();
-
-            try {
-              let requestData;
-              if (uploadedFileId.value) {
-                // 如果有已上传的文件ID，使用文件ID作为file参数
-                requestData = {
-                  file: uploadedFileId.value
-                };
-              } else {
-                // 否则使用文本输入
-                requestData = {
-                  input: input
-                };
-              }
-
-              const response = await fetch(workflowApiUrl, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(requestData)
-              });
-
-              const data = await response.json();
-
-              if (!response.ok) {
-                throw new Error(data.error || "请求失败");
-              }
-
-              assistantMsg.loading = false;
-              assistantMsg.content = data.result || "";
-              assistantMsg.displayedContent = assistantMsg.content;
-              await scrollToBottom();
-
-              // 发送成功后，清除已上传的文件信息
+            
+            // 保存文件信息以便在消息中显示
+            const tempSelectedFile = selectedFile.value;
+            const tempUploadedFileId = uploadedFileId.value;
+            
+            // 立即清除上传文件信息，避免显示"正在处理"
+            if (uploadedFileId.value) {
               uploadedFileId.value = null;
               selectedFile.value = null;
               if (fileInputRef.value) {
                 fileInputRef.value.value = '';
+              }
+            }
+            
+            isSending.value = true;
+            await scrollToBottom();
+
+            try {
+              // 检查是否是豆包模型且有上传的文件
+              if (externalModelType.value === "doubao" && tempUploadedFileId) {
+                // 使用工作流API处理文件
+                let requestData;
+                if (tempUploadedFileId) {
+                  // 如果有已上传的文件ID，使用文件ID作为file参数
+                  requestData = {
+                    file: tempUploadedFileId
+                  };
+                } else {
+                  // 否则使用文本输入
+                  requestData = {
+                    input: input
+                  };
+                }
+
+                const response = await fetch(workflowApiUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify(requestData)
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                  throw new Error(data.error || "请求失败");
+                }
+
+                assistantMsg.loading = false;
+                assistantMsg.content = data.result || "";
+                assistantMsg.displayedContent = assistantMsg.content;
+                await scrollToBottom();
+              } else {
+                // 其他模型，使用对应的API
+                const requestBody = {
+                  message: input,
+                  temperature: temperature.value,
+                  max_tokens: maxTokens.value,
+                  stream: useStream.value,
+                };
+
+                if (externalModelType.value === "grok") {
+                  apiUrl = `${API_BASE_URL}/chat/grok`;
+                } else if (externalModelType.value === "chatgpt") {
+                  apiUrl = `${API_BASE_URL}/chat/chatgpt`;
+                } else if (externalModelType.value === "chatgptproxy") {
+                  apiUrl = `${API_BASE_URL}/chat/chatgpt/proxy`;
+                }
+
+                if (!useStream.value) {
+                  try {
+                    const response = await fetch(apiUrl, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(requestBody),
+                    });
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                      throw new Error(data.error || "请求失败");
+                    }
+
+                    assistantMsg.loading = false;
+                    assistantMsg.thinking_process = (data.thinking_process || "").trim();
+                    assistantMsg.content = data.reply || "";
+                    assistantMsg.token_info = data.token_usage || null;
+                    assistantMsg.response_time_ms = data.response_time_ms || 0;
+                    assistantMsg.displayedThinkingProcess = assistantMsg.thinking_process;
+                    assistantMsg.displayedContent = assistantMsg.content;
+                    await scrollToBottom();
+                  } catch (err) {
+                    assistantMsg.loading = false;
+                    assistantMsg.displayedThinkingProcess = "";
+                    assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
+                    ElMessage.error("发送失败：" + (err.message || "未知错误"));
+                    await scrollToBottom();
+                  } finally {
+                    isSending.value = false;
+                  }
+                } else {
+                  try {
+                    const controller = new AbortController();
+                    const response = await fetch(streamApiUrl, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(requestBody),
+                      signal: controller.signal,
+                    });
+
+                    if (!response.ok || !response.body) {
+                      throw new Error("流式接口请求失败");
+                    }
+
+                    assistantMsg.loading = false;
+                    typingContent.value = "";
+                    assistantMsg.displayedContent = "";
+                    assistantMsg.displayedThinkingProcess = "";
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder("utf-8");
+
+                    let done = false;
+                    let buffer = "";
+
+                    while (!done) {
+                      const { value, done: doneReading } = await reader.read();
+                      if (doneReading) {
+                        done = true;
+                      }
+                      if (value) {
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                          const trimmed = line.trim();
+                          if (!trimmed) continue;
+                          if (trimmed === "[DONE]") {
+                            done = true;
+                            break;
+                          }
+                          try {
+                            const json = JSON.parse(trimmed);
+                            if (json.choices && json.choices.length > 0) {
+                              const choice = json.choices[0];
+                              const delta = choice.delta || {};
+                              if (delta.reasoning_content) {
+                                assistantMsg.displayedThinkingProcess += delta.reasoning_content;
+                              }
+                              if (delta.content) {
+                                typingContent.value += delta.content;
+                                assistantMsg.displayedContent = typingContent.value;
+                              }
+                            } else {
+                              if (json.bot_usage) {
+                                const usage = json.bot_usage;
+                                assistantMsg.token_info = {
+                                  reply_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].completion_tokens || 0 : 0,
+                                  prompt_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].prompt_tokens || 0 : 0,
+                                  total_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].total_tokens || 0 : 0,
+                                };
+                              }
+                              if (json.response_time_ms !== undefined) {
+                                assistantMsg.response_time_ms = json.response_time_ms;
+                              }
+                              if (json.done) {
+                                done = true;
+                              }
+                            }
+                          } catch (e) {
+                            console.warn("解析流式数据异常", e);
+                          }
+                        }
+                      }
+                      await scrollToBottom();
+                    }
+                  } catch (err) {
+                    assistantMsg.loading = false;
+                    assistantMsg.displayedThinkingProcess = "";
+                    assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
+                    ElMessage.error("发送失败：" + (err.message || "未知错误"));
+                  } finally {
+                    isSending.value = false;
+                  }
+                }
               }
             } catch (err) {
               assistantMsg.loading = false;
@@ -903,139 +1059,6 @@
               await scrollToBottom();
             } finally {
               isSending.value = false;
-            }
-            return;
-
-            const requestBody = {
-              message: input,
-              temperature: temperature.value,
-              max_tokens: maxTokens.value,
-              stream: useStream.value,
-            };
-
-            if (externalModelType.value === "grok") {
-              apiUrl = `${API_BASE_URL}/chat/grok`;
-            } else if (externalModelType.value === "chatgpt") {
-              apiUrl = `${API_BASE_URL}/chat/chatgpt`;
-            } else if (externalModelType.value === "chatgptproxy") {
-              apiUrl = `${API_BASE_URL}/chat/chatgpt/proxy`;
-            }
-
-            if (!useStream.value) {
-              try {
-                const response = await fetch(apiUrl, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(requestBody),
-                });
-                const data = await response.json();
-
-                if (!response.ok) {
-                  throw new Error(data.error || "请求失败");
-                }
-
-                assistantMsg.loading = false;
-                assistantMsg.thinking_process = (data.thinking_process || "").trim();
-                assistantMsg.content = data.reply || "";
-                assistantMsg.token_info = data.token_usage || null;
-                assistantMsg.response_time_ms = data.response_time_ms || 0;
-                assistantMsg.displayedThinkingProcess = assistantMsg.thinking_process;
-                assistantMsg.displayedContent = assistantMsg.content;
-                await scrollToBottom();
-              } catch (err) {
-                assistantMsg.loading = false;
-                assistantMsg.displayedThinkingProcess = "";
-                assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
-                ElMessage.error("发送失败：" + (err.message || "未知错误"));
-                await scrollToBottom();
-              } finally {
-                isSending.value = false;
-              }
-            } else {
-              try {
-                const controller = new AbortController();
-                const response = await fetch(streamApiUrl, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(requestBody),
-                  signal: controller.signal,
-                });
-
-                if (!response.ok || !response.body) {
-                  throw new Error("流式接口请求失败");
-                }
-
-                assistantMsg.loading = false;
-                typingContent.value = "";
-                assistantMsg.displayedContent = "";
-                assistantMsg.displayedThinkingProcess = "";
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-
-                let done = false;
-                let buffer = "";
-
-                while (!done) {
-                  const { value, done: doneReading } = await reader.read();
-                  if (doneReading) {
-                    done = true;
-                  }
-                  if (value) {
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop();
-
-                    for (const line of lines) {
-                      const trimmed = line.trim();
-                      if (!trimmed) continue;
-                      if (trimmed === "[DONE]") {
-                        done = true;
-                        break;
-                      }
-                      try {
-                        const json = JSON.parse(trimmed);
-                        if (json.choices && json.choices.length > 0) {
-                          const choice = json.choices[0];
-                          const delta = choice.delta || {};
-                          if (delta.reasoning_content) {
-                            assistantMsg.displayedThinkingProcess += delta.reasoning_content;
-                          }
-                          if (delta.content) {
-                            typingContent.value += delta.content;
-                            assistantMsg.displayedContent = typingContent.value;
-                          }
-                        } else {
-                          if (json.bot_usage) {
-                            const usage = json.bot_usage;
-                            assistantMsg.token_info = {
-                              reply_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].completion_tokens || 0 : 0,
-                              prompt_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].prompt_tokens || 0 : 0,
-                              total_token_usage: usage.model_usage && usage.model_usage.length > 0 ? usage.model_usage[0].total_tokens || 0 : 0,
-                            };
-                          }
-                          if (json.response_time_ms !== undefined) {
-                            assistantMsg.response_time_ms = json.response_time_ms;
-                          }
-                          if (json.done) {
-                            done = true;
-                          }
-                        }
-                      } catch (e) {
-                        console.warn("解析流式数据异常", e);
-                      }
-                    }
-                  }
-                  await scrollToBottom();
-                }
-              } catch (err) {
-                assistantMsg.loading = false;
-                assistantMsg.displayedThinkingProcess = "";
-                assistantMsg.displayedContent = `错误：${err.message || "未知错误"}`;
-                ElMessage.error("发送失败：" + (err.message || "未知错误"));
-              } finally {
-                isSending.value = false;
-              }
             }
           };
 
