@@ -18,6 +18,7 @@ dependencies = [
     "waitress>=3.0.2,<4.0.0",
     "requests>=2.32.5,<3.0.0",
     "cozepy>=0.20.0",
+    "pywebview>=6.1",
 ]
 
 [dependency-groups]

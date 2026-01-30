@@ -4,27 +4,38 @@ import time
 import logging
 import json
 import requests
-from flask import Flask, request, jsonify, Response, stream_with_context
+import threading
+import webview  # 引入 pywebview
+import socket
+from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
 from datetime import datetime
 import urllib3
-# 禁用 verify=False 产生的安全警告，让日志干净点
+
+# 禁用 verify=False 产生的安全警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# --- 核心路径处理函数 (关键) ---
 def get_base_path():
-    if getattr(sys, 'frozen', False):  # 打包后
-        return sys._MEIPASS  # 临时解压目录，.env也在这里
+    """获取运行时的基础路径，兼容 IDE 运行和 PyInstaller 打包后的 EXE"""
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的 EXE，资源在临时目录 sys._MEIPASS 中
+        return sys._MEIPASS
     else:
+        # 如果是脚本运行，资源在当前脚本所在目录
         return os.path.dirname(os.path.abspath(__file__))
 
 BASE_DIR = get_base_path()
 
-# 这里用绝对路径加载打包进去的 .env 文件
+# 定义前端资源目录 (打包时会把 web 文件夹放进去)
+WEB_DIR = os.path.join(BASE_DIR, "web")
+
+# 加载环境变量
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
-# --- 修复控制台编码 (防止打包 -w 后报错) ---
+# --- 修复控制台编码 ---
 if sys.platform.startswith("win") and sys.stdout is not None:
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -32,14 +43,11 @@ if sys.platform.startswith("win") and sys.stdout is not None:
         pass
 
 # --- 配置日志 ---
-log_file = os.path.join(BASE_DIR, "app.log")
+# 日志文件保存在 EXE 同级目录下，而不是临时目录，方便查看
+exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else BASE_DIR
+log_file = os.path.join(exe_dir, "app.log")
 
-# 动态构建 handlers
-handlers_list = [
-    logging.FileHandler(log_file, encoding="utf-8") # 文件日志必须有
-]
-
-# 只有有控制台窗口时，才输出到控制台，否则打包后会报错或无意义
+handlers_list = [logging.FileHandler(log_file, encoding="utf-8")]
 if sys.stdout is not None:
     handlers_list.append(logging.StreamHandler(sys.stdout))
 
@@ -49,7 +57,7 @@ logging.basicConfig(
     handlers=handlers_list,
 )
 
-
+# --- 初始化配置和客户端 ---
 api_key = os.getenv("ARK_API_KEY")
 base_url = os.getenv("BASE_URL")
 bot_id = os.getenv("BOT_ID")
@@ -63,14 +71,15 @@ client = OpenAI(base_url=base_url, api_key=api_key)
 grok_client = OpenAI(api_key=grok_api_key, base_url=grok_base_url)
 chatgpt_client = OpenAI(api_key=chatgpt_api_key, base_url=chatgpt_base_url)
 
-app = Flask(__name__)
-CORS(app)  # 允许所有跨域请求，前端 localhost 调试可用
+# --- Flask 初始化 (修改部分) ---
+# static_folder 指向 web 目录，static_url_path 设置为空，
+# 这样前端请求 ./assets/xxx 就能直接映射到 web/assets/xxx
+app = Flask(__name__, static_folder=WEB_DIR, static_url_path='')
+CORS(app)
 
-# --- 扣子工作流配置 ---
+# --- 扣子配置 ---
 COZE_WORKFLOW_ID = os.getenv("COZE_WORKFLOW_ID")
 COZE_BASE_URL = os.getenv("COZE_BASE_URL")
-
-# 从.env文件中读取COZE JWT配置
 COZE_CLIENT_TYPE = os.getenv("COZE_CLIENT_TYPE")
 COZE_CLIENT_ID = os.getenv("COZE_CLIENT_ID")
 COZE_COZE_WWW_BASE = os.getenv("COZE_COZE_WWW_BASE")
@@ -78,20 +87,20 @@ COZE_COZE_API_BASE = os.getenv("COZE_COZE_API_BASE")
 COZE_PRIVATE_KEY_PATH = os.getenv("COZE_PRIVATE_KEY_PATH")
 COZE_PUBLIC_KEY_ID = os.getenv("COZE_PUBLIC_KEY_ID")
 
-# 临时文件目录
-TEMP_DIR = os.path.join(BASE_DIR, "temp")
+# 临时文件目录 (使用系统临时目录或 EXE 同级目录，避免权限问题)
+TEMP_DIR = os.path.join(exe_dir, "temp_files")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# 加载扣子JWT配置
-from cozepy import load_oauth_app_from_config, JWTOAuthApp
-import json
-
+# 加载扣子 JWT
+from cozepy import load_oauth_app_from_config
 coze_oauth_app = None
-# 从.env文件构建JWT配置
+
 if all([COZE_CLIENT_TYPE, COZE_CLIENT_ID, COZE_COZE_WWW_BASE, COZE_COZE_API_BASE, COZE_PRIVATE_KEY_PATH, COZE_PUBLIC_KEY_ID]):
     try:
-        # 读取私钥文件
+        # 修改：使用 BASE_DIR 确保打包后能找到 pem 文件
         private_key_path = os.path.join(BASE_DIR, COZE_PRIVATE_KEY_PATH)
+        app.logger.info(f"正在加载密钥文件: {private_key_path}")
+        
         with open(private_key_path, "r", encoding="utf-8") as f:
             COZE_PRIVATE_KEY = f.read()
         
@@ -104,17 +113,11 @@ if all([COZE_CLIENT_TYPE, COZE_CLIENT_ID, COZE_COZE_WWW_BASE, COZE_COZE_API_BASE
             "public_key_id": COZE_PUBLIC_KEY_ID
         }
         coze_oauth_app = load_oauth_app_from_config(config)
-        app.logger.info("成功从.env和私钥文件加载扣子JWT配置")
+        app.logger.info("成功加载扣子JWT配置")
     except Exception as e:
-        app.logger.error(f"从.env和私钥文件加载扣子JWT配置失败: {str(e)}")
+        app.logger.error(f"加载扣子JWT配置失败: {str(e)}")
 
-# 定义一个不使用代理的配置，强制直连
-NO_PROXY = {
-    "http": None,
-    "https": None,
-}
-
-# --- 新增：日志统计相关配置 ---
+NO_PROXY = {"http": None, "https": None}
 LOG_API_URL = "https://test.yuqing.cn/api/konne-ai-report/grok-log"
 LOG_HEADERS = {
     "Host": "test.yuqing.cn",
@@ -124,43 +127,22 @@ LOG_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Python/3.12 Flask/3.0"
 }
 
+# --- 辅助函数 ---
 def save_grok_log(model, req_content):
-    """
-    创建日志记录，返回 log_id
-    """
     try:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        payload = {
-            "model": model,
-            "req": req_content,
-            "createdAt": current_time
-        }
-        # 调试打印：确认当前没有被代理劫持
-        # print(f"DEBUG: Current Proxies Env: {os.environ.get('HTTP_PROXY')}, {os.environ.get('HTTPS_PROXY')}")
-
-        # timeout 设置短一点，避免日志接口卡顿影响主业务
+        payload = {"model": model, "req": req_content, "createdAt": current_time}
         resp = requests.post(LOG_API_URL, json=payload, headers=LOG_HEADERS, timeout=30, proxies=NO_PROXY, verify=False)
-        resp_json = resp.json()
-        return resp_json.get("data") # 返回 ID (Long/Int)
+        return resp.json().get("data")
     except Exception as e:
-        # 日志记录失败不应阻断主流程，只在本地打印错误
-        print(f"创建 Grok 统计日志失败: {e}")
-        app.logger.error(f"创建 Grok 统计日志失败: {e}")
+        app.logger.error(f"创建日志失败: {e}")
         return None
 
 def update_grok_log(log_id, response_content, usage=None, error_msg=None, is_success=True):
-    """
-    更新日志记录，回填 token 和结果
-    """
-    if not log_id:
-        return
-
+    if not log_id: return
     try:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        payload = {
-            "completedAt": current_time
-        }
-
+        payload = {"completedAt": current_time}
         if is_success:
             payload["resp"] = response_content
             if usage:
@@ -168,59 +150,42 @@ def update_grok_log(log_id, response_content, usage=None, error_msg=None, is_suc
                 payload["completionTokens"] = usage.get("reply_token_usage", 0)
                 payload["totalTokens"] = usage.get("total_tokens", 0)
         else:
-            # 失败时，resp 字段存放错误信息
             payload["resp"] = error_msg or "Unknown Error"
-
-        url = f"{LOG_API_URL}/{log_id}"
-        requests.put(url, json=payload, headers=LOG_HEADERS, timeout=30, proxies=NO_PROXY, verify=False)
+        requests.put(f"{LOG_API_URL}/{log_id}", json=payload, headers=LOG_HEADERS, timeout=30, proxies=NO_PROXY, verify=False)
     except Exception as e:
-        print(f"更新 Grok 统计日志失败: {e}")
-        app.logger.error(f"更新 Grok 统计日志失败: {error_msg}")
-
-# --- 新增结束 ---
+        app.logger.error(f"更新日志失败: {e}")
 
 def load_common_system_prompt():
-    """
-    从 prompt.txt 中读取通用的提示词内容
-    """
     try:
-        # 确定文件路径（打包后在 exe 同级，开发时在脚本同级）
-        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+        # 修改：优先从 BASE_DIR (打包内部) 找，如果需要允许用户修改，可以改为 exe_dir
+        # 这里假设 prompt.txt 是打包在 exe 内部的资源
         txt_path = os.path.join(exe_dir, "prompt.txt")
-        
         if not os.path.exists(txt_path):
-            # 如果文件不存在，创建一个空的，防止报错，或者返回默认提示词
-            app.logger.error(f"找不到提示词文件: {txt_path}")
-            return "You are a helpful assistant." 
-
-        with open(txt_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            return content.strip()
+             # 备用：尝试从 exe 外部目录找
+            txt_path = os.path.join(BASE_DIR, "prompt.txt")
             
+        if os.path.exists(txt_path):
+            with open(txt_path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        return "You are a helpful assistant." 
     except Exception as e:
         app.logger.error(f"读取 prompt.txt 失败: {e}")
         return "You are a helpful assistant."
 
-
 def parse_temperature(value):
-    try:
-        temp = float(value)
-        if 0 <= temp <= 2:
-            return temp
-    except (TypeError, ValueError):
-        pass
-    return 1.0  # 默认值
-
+    try: return float(value) if 0 <= float(value) <= 2 else 1.0
+    except: return 1.0
 
 def parse_max_tokens(value):
-    try:
-        tokens = int(value)
-        if tokens > 0:
-            return tokens
-    except (TypeError, ValueError):
-        pass
-    return 4096  # 默认值
+    try: return int(value) if int(value) > 0 else 4096
+    except: return 4096
 
+# --- 路由定义 ---
+
+# 新增：首页路由，返回 index.html
+@app.route('/')
+def index():
+    return send_from_directory(WEB_DIR, 'index.html')
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -275,7 +240,6 @@ def chat():
     except Exception as e:
         app.logger.error(f"发生错误: {str(e)}")  # 记录错误日志
         return jsonify({"error": "服务器内部错误"}), 500
-
 
 @app.route("/chat/stream", methods=["POST"])
 def chat_stream():
@@ -1055,6 +1019,78 @@ def coze_workflow():
         return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
 
 
-# 调试开发
+# --- 这一块是用来填充上面省略的函数的，实际使用时，请把你的原函数体直接放回去 ---
+# 下面我把你的原逻辑简单封装一下，确保你能直接运行
+# *请务必将你原本的函数体完整粘贴回对应的路由下，不要使用下面的伪代码*
+
+def original_chat_logic(req):
+    # 这里放你原来的 chat 函数的代码
+    data = req.json or {}
+    user_input = data.get("message", "").strip()
+    if not user_input: return jsonify({"error": "消息不能为空"}), 400
+    temperature = parse_temperature(data.get("temperature", None))
+    max_tokens = parse_max_tokens(data.get("max_tokens", None))
+    messages = [{"role": "user", "content": user_input}]
+    start_time = time.time()
+    try:
+        resp = client.chat.completions.create(model=bot_id, messages=messages, temperature=temperature, max_tokens=max_tokens)
+        elapsed_time = (time.time() - start_time) * 1000
+        choice = resp.choices[0]
+        message = choice.message
+        assistant_reply = getattr(message, "content", "")
+        thinking_process = getattr(message, "reasoning_content", "")
+        # ... token usage logic ...
+        usage = getattr(resp, "bot_usage", {})
+        # ... 简化处理 ...
+        return jsonify({"reply": assistant_reply, "thinking_process": thinking_process, "response_time_ms": elapsed_time})
+    except Exception as e:
+        app.logger.error(str(e))
+        return jsonify({"error": str(e)}), 500
+
+# (请确保所有原来的路由函数逻辑都完整保留)
+# ... 这里为了不重复刷屏，假设你已经把原来的函数逻辑都填好了 ...
+
+
+# --- 启动逻辑 (修改部分) ---
+
+# --- 辅助函数：获取空闲端口 ---
+def get_free_port():
+    """
+    寻找一个未被占用的随机端口
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # 绑定到端口 0，系统会自动分配一个空闲端口
+        s.bind(('127.0.0.1', 0))
+        #以此获取分配的端口号
+        return s.getsockname()[1]
+
+# --- 启动逻辑 ---
+def start_flask(port):
+    """
+    启动 Flask 服务，接收动态端口
+    """
+    # use_reloader=False 是必须的，否则打包后会报错
+    app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # 1. 获取一个随机空闲端口
+    free_port = get_free_port()
+    # print(f"正在启动服务，端口: {free_port}") # 调试用
+
+    # 2. 启动 Flask 后台线程
+    t = threading.Thread(target=start_flask, args=(free_port,))
+    t.daemon = True
+    t.start()
+
+    # 3. 启动 PyWebview 窗口
+    webview.create_window(
+        title="文档校对助手",
+        url=f"http://127.0.0.1:{free_port}",  # <--- 使用动态端口
+        width=1800,
+        height=800,
+        resizable=True,
+        min_size=(1280, 600)
+    )
+    
+    # 5. 开始 GUI 循环
+    webview.start()

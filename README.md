@@ -17,3 +17,23 @@ uv run pyinstaller --onefile --noconsole --add-data ".env;." --add-data "coze_pr
 ```bash
 taskkill /F /IM run.exe
 ```
+
+```powershell
+uv runpyinstaller --noconsole --onefile --name="文档校对助手" `
+    --icon="web/assets/img/favicon.ico" `
+    --add-data "web;web" `
+    --add-data ".env;." `
+    --add-data "coze_private_key.pem;." `
+    --add-data "prompt.txt;." `
+    app.py
+```
+
+```bash
+uv run pyinstaller --noconsole --onefile --name="文档校对助手" ^
+    --add-data "web;web" ^
+    --add-data ".env;." ^
+    --add-data "coze_private_key.pem;." ^
+    --add-data "prompt.txt;." ^
+    --icon=web/assets/img/favicon.ico ^
+    app.py
+```
