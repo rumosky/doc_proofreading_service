@@ -1,8 +1,8 @@
 name: Release
 on:
   push:
-    branches:
-      - app # 当推送到 app 分支时触发
+    tags:
+      - 'v*'
 
 jobs:
   publish:
