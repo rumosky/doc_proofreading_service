@@ -34,14 +34,30 @@ jobs:
       - name: install dependencies
         run: pnpm install
 
-      # --- 关键步骤：恢复敏感文件 ---
+      # --- 关键步骤：恢复敏感文件并注入环境变量 ---
       - name: Restore Secrets
         shell: bash
         run: |
           # 恢复 .env 文件
           echo "${{ secrets.ENV_FILE }}" > .env
-          # 恢复 PEM 私钥文件 (存放在 src-tauri 目录下)
-          echo "${{ secrets.PEM_FILE }}" > src-tauri/coze_private_key.pem
+          
+          # 恢复 PEM 私钥文件
+          echo "${{ secrets.PEM_FILE }}" > coze_private_key.pem
+          
+          # 将 .env 中的变量导出到 GITHUB_ENV，以便 Rust 编译器在打包时注入
+          while IFS='=' read -r key value; do
+            # 忽略注释和空行
+            if [[ ! $key =~ ^# && -n $key ]]; then
+              # 去除两侧引号（如果有）
+              value=$(echo $value | sed -e 's/^"//' -e 's/"$//')
+              echo "$key=$value" >> $GITHUB_ENV
+            fi
+          done < .env
+          
+          # 将 PEM 内容作为环境变量导出，用于 compile-time 注入
+          echo "COZE_PRIVATE_KEY_CONTENT<<EOF" >> $GITHUB_ENV
+          cat coze_private_key.pem >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: build and release
         uses: tauri-apps/tauri-action@v0

@@ -10,6 +10,16 @@ use std::path::PathBuf;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+ 
+ macro_rules! get_env_var {
+     ($name:literal) => {
+         option_env!($name).map(|s| s.to_string()).or_else(|| std::env::var($name).ok())
+     };
+     ($name:literal, $default:expr) => {
+         option_env!($name).map(|s| s.to_string()).or_else(|| std::env::var($name).ok()).unwrap_or_else(|| $default.to_string())
+     };
+ }
+
 
 #[derive(Serialize, Deserialize, Clone)]
 struct ChatRequest {
@@ -47,18 +57,18 @@ async fn chat(
     
     let (api_key, base_url, model_id) = match request.model_type.as_str() {
         "doubao" => (
-            env::var("ARK_API_KEY").map_err(|_| "ARK_API_KEY not found")?,
-            env::var("BASE_URL").unwrap_or_else(|_| "https://ark.cn-beijing.volces.com/api/v3".to_string()),
-            env::var("BOT_ID").map_err(|_| "BOT_ID not found")?,
+            get_env_var!("ARK_API_KEY").ok_or("ARK_API_KEY not found")?,
+            get_env_var!("BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+            get_env_var!("BOT_ID").ok_or("BOT_ID not found")?,
         ),
         "grok" => (
-            env::var("GROK_API_KEY").map_err(|_| "GROK_API_KEY not found")?,
-            env::var("GROK_BASE_URL").unwrap_or_else(|_| "https://api.x.ai/v1".to_string()),
+            get_env_var!("GROK_API_KEY").ok_or("GROK_API_KEY not found")?,
+            get_env_var!("GROK_BASE_URL", "https://api.x.ai/v1"),
             "grok-4-1-fast-reasoning".to_string(),
         ),
         "chatgpt" => (
-            env::var("CHATGPT_API_KEY").map_err(|_| "CHATGPT_API_KEY not found")?,
-            env::var("CHATGPT_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            get_env_var!("CHATGPT_API_KEY").ok_or("CHATGPT_API_KEY not found")?,
+            get_env_var!("CHATGPT_BASE_URL", "https://api.openai.com/v1"),
             "gpt-4-turbo".to_string(),
         ),
         _ => return Err("Unsupported model type".to_string()),
@@ -174,7 +184,7 @@ async fn upload_file(path: String, state: State<'_, AppState>) -> Result<String,
 async fn coze_workflow(input: String, file_id: String, state: State<'_, AppState>) -> Result<ChatResponse, String> {
     let start_time = std::time::Instant::now();
     let access_token = fetch_coze_access_token(&state.client).await?;
-    let workflow_id = env::var("COZE_WORKFLOW_ID").map_err(|_| "COZE_WORKFLOW_ID not found")?;
+    let workflow_id = get_env_var!("COZE_WORKFLOW_ID").ok_or("COZE_WORKFLOW_ID not found")?;
 
     // 回退到流式接口要求的字符串化参数
     let parameters = if !file_id.is_empty() {
@@ -249,25 +259,32 @@ async fn coze_workflow(input: String, file_id: String, state: State<'_, AppState
 }
 
 fn generate_coze_jwt() -> Result<String, String> {
-    let client_id = env::var("COZE_CLIENT_ID").map_err(|_| "COZE_CLIENT_ID not found")?;
-    let private_key_filename = env::var("COZE_PRIVATE_KEY_PATH").unwrap_or_else(|_| "coze_private_key.pem".to_string());
-    let pub_key_id = env::var("COZE_PUBLIC_KEY_ID").map_err(|_| "COZE_PUBLIC_KEY_ID not found")?;
+    let client_id = get_env_var!("COZE_CLIENT_ID").ok_or("COZE_CLIENT_ID not found")?;
+    let private_key_filename = get_env_var!("COZE_PRIVATE_KEY_PATH", "coze_private_key.pem");
+    let pub_key_id = get_env_var!("COZE_PUBLIC_KEY_ID").ok_or("COZE_PUBLIC_KEY_ID not found")?;
 
-    let mut pem_path = PathBuf::from(&private_key_filename);
-    if !pem_path.exists() {
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let p = exe_dir.join(&private_key_filename);
-                if p.exists() { pem_path = p; }
+    let pem_content = if let Some(b64) = option_env!("COZE_PRIVATE_KEY_B64") {
+        use base64::{Engine as _, engine::general_purpose};
+        let bytes = general_purpose::STANDARD.decode(b64).map_err(|e| format!("PEM decode error: {}", e))?;
+        String::from_utf8(bytes).map_err(|e| format!("PEM utf8 error: {}", e))?
+    } else if let Some(content) = get_env_var!("COZE_PRIVATE_KEY_CONTENT") {
+        content
+    } else {
+        let mut pem_path = PathBuf::from(&private_key_filename);
+        if !pem_path.exists() {
+            if let Ok(exe_path) = env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let p = exe_dir.join(&private_key_filename);
+                    if p.exists() { pem_path = p; }
+                }
             }
         }
-    }
-    if !pem_path.exists() {
-        let parent_path = PathBuf::from("..").join(&private_key_filename);
-        if parent_path.exists() { pem_path = parent_path; }
-    }
-
-    let pem_content = std::fs::read_to_string(pem_path).map_err(|e| format!("Read PEM error: {}", e))?;
+        if !pem_path.exists() {
+            let parent_path = PathBuf::from("..").join(&private_key_filename);
+            if parent_path.exists() { pem_path = parent_path; }
+        }
+        std::fs::read_to_string(pem_path).map_err(|e| format!("Read PEM error: {}", e))?
+    };
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     
     let claims = serde_json::json!({
