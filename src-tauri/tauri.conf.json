@@ -1,0 +1,62 @@
+{
+  "productName": "DocProofreader",
+  "version": "5.0.0",
+  "identifier": "com.lbb.docproofreading",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "文档校对助手",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "windows": {
+      "nsis": {
+        "license": "./license.rtf",
+        "createDesktopCheckbox": true,
+        "createStartMenuCheckbox": true,
+        "languages": [
+          "ChineseSimplified"
+        ],
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installMode": "perMachine",
+        "oneClick": false,
+        "allowToChangeInstallationDirectory": true
+      },
+      "wix": {
+        "license": "./license.rtf",
+        "language": [
+          "zh-CN"
+        ],
+        "config": {
+          "installRoot": "ProgramFiles64Folder"
+        }
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ]
+  }
+}

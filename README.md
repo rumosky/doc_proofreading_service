@@ -25,7 +25,7 @@ uv run pyinstaller --noconsole --onefile --name="文档校对助手" `
     --add-data "web;web" `
     --add-data ".env;." `
     --add-data "coze_private_key.pem;." `
-    --add-data "prompt.txt;." `
+    --add-data "prompt.md;." `
     app.py
 ```
 
@@ -36,6 +36,6 @@ uv run pyinstaller --noconsole --onefile --name="文档校对助手" ^
     --add-data "web;web" ^
     --add-data ".env;." ^
     --add-data "coze_private_key.pem;." ^
-    --add-data "prompt.txt;." ^
+    --add-data "prompt.md;." ^
     app.py
 ```

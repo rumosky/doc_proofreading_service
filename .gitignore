@@ -1,8 +1,59 @@
-.env
-app.log
-build/
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Node / Frontend
+node_modules/
 dist/
+dist-ssr/
+*.local
+auto-imports.d.ts
+components.d.ts
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+# If you build with sidecars/resources that shouldn't be tracked
+# src-tauri/binaries/*
+# !src-tauri/binaries/.gitkeep
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Legacy Python (if any left)
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
 .poetry/
 *.spec
 test.py

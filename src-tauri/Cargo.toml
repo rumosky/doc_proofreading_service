@@ -1,0 +1,33 @@
+[package]
+name = "doc-proofreading-service"
+version = "1.0.0"
+description = "文档校对助手 - Tauri + Rust"
+authors = ["LBB"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+tauri-plugin-fs = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+tokio = { version = "1.0", features = ["full"] }
+dotenvy = "0.15"
+log = "0.4"
+env_logger = "0.11"
+futures-util = "0.3"
+jsonwebtoken = "9.0"
+base64 = "0.22"
+uuid = { version = "1.0", features = ["v4"] }
+
+[profile.release]
+panic = "abort" # 减少二进制大小
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
