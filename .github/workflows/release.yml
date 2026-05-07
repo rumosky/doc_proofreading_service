@@ -2,7 +2,7 @@ name: Release
 on:
   push:
     branches:
-      - main # 当推送到 main 分支时触发
+      - app # 当推送到 app 分支时触发
 
 jobs:
   publish:
