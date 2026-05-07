@@ -1,0 +1,56 @@
+name: Release
+on:
+  push:
+    branches:
+      - main # 当推送到 main 分支时触发
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest' # 目前您的主要目标平台
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: install dependencies
+        run: pnpm install
+
+      # --- 关键步骤：恢复敏感文件 ---
+      - name: Restore Secrets
+        shell: bash
+        run: |
+          # 恢复 .env 文件
+          echo "${{ secrets.ENV_FILE }}" > .env
+          # 恢复 PEM 私钥文件 (存放在 src-tauri 目录下)
+          echo "${{ secrets.PEM_FILE }}" > src-tauri/coze_private_key.pem
+
+      - name: build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__ # 使用 tauri.conf.json 中的版本号
+          releaseName: "文档校对助手 v__VERSION__"
+          releaseBody: "自动生成的 Release"
+          releaseDraft: true
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc

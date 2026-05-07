@@ -3,6 +3,7 @@ import vue from "@vitejs/plugin-vue";
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import { compression } from 'vite-plugin-compression2'
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
@@ -14,6 +15,7 @@ export default defineConfig(async () => ({
     Components({
       resolvers: [ElementPlusResolver()],
     }),
+    compression(),
   ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -33,14 +35,14 @@ export default defineConfig(async () => ({
   // 打包优化配置
   build: {
     // 提高大文件警告阈值
-    chunkSizeWarningLimit: 500,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
-        // 手动分包逻辑：将依赖库拆分
+        // 手动分包逻辑：将大依赖单独拆分，优化加载
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('vue') || id.includes('marked')) {
-              return 'vendor-core';
+            if (id.includes('element-plus')) {
+              return 'element-plus';
             }
             return 'vendor';
           }
