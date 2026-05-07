@@ -26,7 +26,8 @@
   "bundle": {
     "active": true,
     "targets": [
-      "nsis"
+      "nsis",
+      "msi"
     ],
     "licenseFile": "./license.rtf",
     "windows": {
