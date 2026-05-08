@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-dialog'
 import { marked } from 'marked'
+import { listen } from '@tauri-apps/api/event'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -39,6 +40,8 @@ const selectedFileName = ref('')
 const uploadedFileId = ref('')
 const isUploading = ref(false)
 const appVersion = ref('')
+const isDragOver = ref(false)
+const dragFileCount = ref(0)
 
 onMounted(async () => {
   try {
@@ -46,6 +49,26 @@ onMounted(async () => {
   } catch (err) {
     console.error('Failed to get version:', err)
   }
+  
+  // 监听原生拖拽进入事件
+  const unlistenEnter = await listen<number>('drag-enter', (event) => {
+    console.log('Drag enter with', event.payload, 'files')
+    isDragOver.value = true
+    dragFileCount.value = event.payload
+  })
+  
+  // 监听原生拖拽离开事件
+  const unlistenLeave = await listen('drag-leave', () => {
+    console.log('Drag leave')
+    isDragOver.value = false
+    dragFileCount.value = 0
+  })
+  
+  // 监听原生拖拽释放事件
+  const unlistenDrop = await listen<string[]>('file-dropped', (event) => {
+    console.log('Files dropped:', event.payload)
+    handleNativeDrop(event.payload)
+  })
 })
 
 const modelTypeOptions = [
@@ -92,6 +115,36 @@ const handleFileUpload = async () => {
       uploadedFileId.value = fileId
       ElMessage.success('文件上传成功')
     }
+  } catch (err) {
+    ElMessage.error(`文件处理失败: ${err}`)
+    selectedFileName.value = ''
+  } finally {
+    isUploading.value = false
+  }
+}
+
+// 处理原生拖拽事件
+const handleNativeDrop = async (paths: string[]) => {
+  if (isUploading.value || paths.length === 0) return
+  
+  try {
+    // 调用 Rust 命令验证文件
+    const validPaths: string[] = await invoke('handle_dropped_files', { paths })
+    
+    if (validPaths.length === 0) {
+      ElMessage.error('没有有效的 .doc 或 .docx 文件')
+      return
+    }
+    
+    // 使用第一个有效文件
+    const filePath = validPaths[0]
+    isUploading.value = true
+    selectedFileName.value = filePath.split(/[\\/]/).pop() || ''
+    
+    // 调用 Rust 后端上传
+    const fileId: string = await invoke('upload_file', { path: filePath })
+    uploadedFileId.value = fileId
+    ElMessage.success(`文件 "${selectedFileName.value}" 上传成功`)
   } catch (err) {
     ElMessage.error(`文件处理失败: ${err}`)
     selectedFileName.value = ''
@@ -247,6 +300,16 @@ watch(externalModelType, () => {
 
 <template>
   <div id="app-container">
+    <!-- 全局拖拽提示层 -->
+    <div v-if="isDragOver" class="global-drag-overlay">
+      <div class="drag-content">
+        <el-icon :size="80" color="#646cff"><Upload /></el-icon>
+        <h2>释放以上传文件</h2>
+        <p>检测到 {{ dragFileCount }} 个文件</p>
+        <p class="drag-tip">支持 .doc 和 .docx 格式</p>
+      </div>
+    </div>
+    
     <header>
       <h1 class="logo-title">文档校对助手 <span class="badge">v{{ appVersion }}</span></h1>
     </header>
@@ -289,7 +352,7 @@ watch(externalModelType, () => {
         <div v-if="externalModelType === 'doubao'" class="upload-section">
           <div v-if="!selectedFileName" class="upload-placeholder" @click="handleFileUpload">
             <el-icon><Upload /></el-icon>
-            <span>{{ isUploading ? '正在上传...' : '点击上传文档 (.doc/.docx)' }}</span>
+            <span>{{ isUploading ? '正在上传...' : '点击或拖拽上传文档 (.doc/.docx)' }}</span>
           </div>
           <div v-else class="file-card">
             <el-icon><Document /></el-icon>
@@ -362,6 +425,70 @@ html, body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
+}
+
+/* 全局拖拽提示层 */
+.global-drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.drag-content {
+  text-align: center;
+  padding: 60px;
+  border: 4px dashed #646cff;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(100, 108, 255, 0.05) 0%, rgba(100, 108, 255, 0.1) 100%);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.drag-content h2 {
+  margin: 20px 0 10px;
+  color: #646cff;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.drag-content p {
+  margin: 8px 0;
+  color: #606266;
+  font-size: 16px;
+}
+
+.drag-tip {
+  color: #909399 !important;
+  font-size: 14px !important;
+  margin-top: 15px !important;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(100, 108, 255, 0.4);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 20px rgba(100, 108, 255, 0);
+  }
 }
 
 #app-container {

@@ -181,6 +181,44 @@ async fn upload_file(path: String, state: State<'_, AppState>) -> Result<String,
 }
 
 #[command]
+fn handle_dropped_files(paths: Vec<String>) -> Result<Vec<String>, String> {
+    // 验证文件路径并返回有效的文件路径列表
+    let mut valid_paths = Vec::new();
+    
+    for path in paths {
+        let path_buf = PathBuf::from(&path);
+        
+        // 检查文件是否存在
+        if !path_buf.exists() {
+            log::warn!("File does not exist: {}", path);
+            continue;
+        }
+        
+        // 检查是否是文件（不是目录）
+        if !path_buf.is_file() {
+            log::warn!("Path is not a file: {}", path);
+            continue;
+        }
+        
+        // 检查文件扩展名
+        if let Some(ext) = path_buf.extension() {
+            let ext_lower = ext.to_string_lossy().to_lowercase();
+            if ext_lower == "doc" || ext_lower == "docx" {
+                valid_paths.push(path);
+            } else {
+                log::warn!("Unsupported file type: {}", path);
+            }
+        }
+    }
+    
+    if valid_paths.is_empty() {
+        return Err("没有有效的 .doc 或 .docx 文件".to_string());
+    }
+    
+    Ok(valid_paths)
+}
+
+#[command]
 async fn coze_workflow(input: String, file_id: String, state: State<'_, AppState>) -> Result<ChatResponse, String> {
     let start_time = std::time::Instant::now();
     let access_token = fetch_coze_access_token(&state.client).await?;
@@ -307,6 +345,10 @@ fn main() {
     if dotenv().is_err() {
         let _ = dotenvy::from_path("../.env");
     }
+    
+    // 初始化日志
+    env_logger::init();
+    
     let client = Client::builder().danger_accept_invalid_certs(true).build().expect("Failed to create HTTP client");
 
     tauri::Builder::default()
@@ -314,7 +356,59 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![chat, test_connectivity, upload_file, coze_workflow])
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![
+            chat, 
+            test_connectivity, 
+            upload_file, 
+            coze_workflow,
+            handle_dropped_files
+        ])
+        .setup(|app| {
+            // 启用原生拖拽支持
+            use tauri::{Manager, Emitter};
+            let window = app.get_webview_window("main").unwrap();
+            
+            // 设置窗口接受拖拽文件
+            #[cfg(desktop)]
+            {
+                let window_clone = window.clone();
+                
+                // 监听拖拽事件
+                window.on_window_event(move |event| {
+                    match event {
+                        // 拖拽进入窗口
+                        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, position: _ }) => {
+                            log::info!("Drag enter with {} files", paths.len());
+                            let _ = window_clone.emit("drag-enter", paths.len());
+                        }
+                        // 拖拽离开窗口
+                        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Leave) => {
+                            log::info!("Drag leave");
+                            let _ = window_clone.emit("drag-leave", ());
+                        }
+                        // 拖拽释放
+                        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, position: _ }) => {
+                            log::info!("Files dropped: {:?}", paths);
+                            
+                            // 先发送拖拽离开事件，隐藏提示层
+                            let _ = window_clone.emit("drag-leave", ());
+                            
+                            // 将文件路径发送到前端
+                            let file_paths: Vec<String> = paths.iter()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .collect();
+                            
+                            // 通过 emit 事件通知前端
+                            let _ = window_clone.emit("file-dropped", file_paths);
+                        }
+                        _ => {}
+                    }
+                });
+            }
+            
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
